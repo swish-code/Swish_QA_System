@@ -1,0 +1,6 @@
+{
+  "name": "Swish QA",
+  "description": "Professional call quality management system for Swish, featuring audits, coaching, and performance tracking.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

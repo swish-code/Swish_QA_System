@@ -1,0 +1,175 @@
+@import "tailwindcss";
+
+@theme {
+  --color-background: var(--app-bg);
+  --color-foreground: var(--app-fg);
+  --color-card: var(--card-bg);
+  --color-card-border: var(--card-border);
+  
+  --color-zinc-950: #000000;
+  --color-zinc-900: #08080a;
+  --color-zinc-850: #121214;
+  --color-zinc-800: #1b1b1f;
+  
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+}
+
+:root {
+  --background: 0 0% 100%;
+  --foreground: 222.2 84% 4.9%;
+  --card: 0 0% 100%;
+  --card-foreground: 222.2 84% 4.9%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 222.2 84% 4.9%;
+  --primary: 238.7 83.5% 66.7%;
+  --primary-foreground: 210 40% 98%;
+  --secondary: 210 40% 96.1%;
+  --secondary-foreground: 222.2 47.4% 11.2%;
+  --muted: 210 40% 96.1%;
+  --muted-foreground: 215.4 16.3% 46.9%;
+  --accent: 210 40% 96.1%;
+  --accent-foreground: 222.2 47.4% 11.2%;
+  --destructive: 0 84.2% 60.2%;
+  --destructive-foreground: 210 40% 98%;
+  --border: 214.3 31.8% 91.4%;
+  --input: 214.3 31.8% 91.4%;
+  --ring: 221.2 83.2% 53.3%;
+  --radius: 1rem;
+
+  /* App specific variables */
+  --app-bg: #f8fafc;
+  --app-fg: #0f172a;
+  --card-bg: #ffffff;
+  --card-border: #e2e8f0;
+  --sidebar-bg: #ffffff;
+  --input-bg: #ffffff;
+  --scroll-track: #f8fafc;
+  --scroll-thumb: #cbd5e1;
+}
+
+.dark {
+  --background: 222.2 84% 4.9%;
+  --foreground: 210 40% 98%;
+  --card: 222.2 84% 4.9%;
+  --card-foreground: 210 40% 98%;
+  --popover: 222.2 84% 4.9%;
+  --popover-foreground: 210 40% 98%;
+  --primary: 217.2 91.2% 59.8%;
+  --primary-foreground: 222.2 47.4% 11.2%;
+  --secondary: 217.2 32.6% 17.5%;
+  --secondary-foreground: 210 40% 98%;
+  --muted: 217.2 32.6% 17.5%;
+  --muted-foreground: 215 20.2% 65.1%;
+  --accent: 217.2 32.6% 17.5%;
+  --accent-foreground: 210 40% 98%;
+  --destructive: 0 62.8% 30.6%;
+  --destructive-foreground: 210 40% 98%;
+  --border: 217.2 32.6% 17.5%;
+  --input: 217.2 32.6% 17.5%;
+  --ring: 224.3 76.3% 48%;
+
+  /* App specific variables dark mode */
+  --app-bg: #000000;
+  --app-fg: #f4f4f5;
+  --card-bg: #000000;
+  --card-border: #18181b;
+  --sidebar-bg: #000000;
+  --input-bg: #000000;
+  --scroll-track: #000000;
+  --scroll-thumb: #27272a;
+}
+
+body {
+  background-color: var(--app-bg);
+  color: var(--app-fg);
+  @apply font-sans antialiased transition-colors duration-300;
+  min-height: 100vh;
+}
+
+.glass {
+  background-color: var(--sidebar-bg);
+  @apply backdrop-blur-md transition-all duration-300;
+  border-color: var(--card-border);
+}
+
+.dark .glass {
+  background-color: color-mix(in srgb, var(--sidebar-bg), transparent 10%);
+}
+
+.glass-card {
+  background-color: var(--card-bg);
+  border-color: var(--card-border);
+  @apply rounded-[2rem] p-8 transition-all duration-300 border shadow-sm;
+}
+
+.dark .glass-card {
+  @apply border-zinc-900 shadow-none hover:border-zinc-800 bg-[#000000];
+}
+
+.light .glass-card {
+  @apply bg-white border-slate-200/60 shadow-[0_8px_30px_rgb(0,0,0,0.04)] hover:shadow-[0_8px_30px_rgb(0,0,0,0.08)];
+}
+
+.input-field {
+  background-color: var(--input-bg);
+  border-color: var(--card-border);
+  color: var(--app-fg);
+  @apply w-full rounded-2xl px-5 py-3.5 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-indigo-600/10 focus:border-indigo-600 transition-all border font-medium;
+}
+
+.dark .input-field {
+  @apply bg-[#000000] border-zinc-900 focus:bg-black;
+}
+
+.btn-primary {
+  @apply bg-indigo-600 hover:bg-zinc-900 dark:hover:bg-white text-white dark:hover:text-black font-black text-[11px] uppercase tracking-[0.2em] py-4 px-8 rounded-2xl transition-all active:scale-95 disabled:opacity-50 disabled:pointer-events-none shadow-xl shadow-indigo-600/20 italic;
+}
+
+.sidebar-link {
+  @apply flex items-center gap-3 px-5 py-4 rounded-2xl transition-all duration-300 font-black text-[11px] uppercase tracking-widest italic;
+}
+
+.dark .sidebar-link {
+  @apply text-zinc-500 hover:text-zinc-100 hover:bg-white/5;
+}
+
+.light .sidebar-link {
+  @apply text-zinc-400 hover:text-indigo-600 hover:bg-slate-100;
+}
+
+.sidebar-link.active {
+  @apply bg-indigo-600 text-white shadow-2xl shadow-indigo-600/20;
+}
+
+.dark .sidebar-link.active {
+  @apply bg-white text-black shadow-white/5;
+}
+
+
+.inverted-date-icon::-webkit-calendar-picker-indicator {
+  filter: invert(var(--date-icon-invert, 0)) brightness(0.8) contrast(1.2);
+  cursor: pointer;
+}
+
+.dark {
+  --date-icon-invert: 1;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background-color: var(--scroll-track);
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: var(--scroll-thumb);
+  @apply rounded-full transition-colors;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply brightness-110;
+}
+
