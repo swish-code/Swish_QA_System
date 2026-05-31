@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { 
   Search, 
@@ -20,7 +20,6 @@ import {
 } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Evaluation } from '../types';
-import { motion, AnimatePresence } from 'motion/react';
 
 interface PaginationData {
   totalItems: number;
@@ -136,12 +135,16 @@ export default function AuditList() {
     }
   };
 
+  // Memoize average so we don't reduce on every render
+  const averageScore = useMemo(() => {
+    if (evaluations.length === 0) return 0;
+    return Math.round(evaluations.reduce((acc, curr) => acc + curr.final_score, 0) / evaluations.length);
+  }, [evaluations]);
+
   return (
     <div className="space-y-4 max-w-[1400px] mx-auto">
       {/* Compact Header & Stats Banner */}
-      <div className="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-3 sm:p-4 relative overflow-hidden transition-colors duration-300 shadow-sm">
-        <div className="absolute top-0 right-0 w-[400px] h-[300px] bg-indigo-600/5 blur-[100px] -z-10" />
-
+      <div className="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-3 sm:p-4 shadow-sm">
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
           <div className="flex items-center gap-3 min-w-0">
             <div className="w-9 h-9 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-600 dark:text-emerald-500 shrink-0">
@@ -156,16 +159,14 @@ export default function AuditList() {
           </div>
 
           <div className="flex gap-2 shrink-0">
-            <div className="bg-zinc-50 dark:bg-zinc-900/50 border border-zinc-100 dark:border-zinc-800 px-3 sm:px-4 py-2 rounded-xl flex items-center gap-2 sm:gap-3 transition-colors duration-300">
+            <div className="bg-zinc-50 dark:bg-zinc-900/50 border border-zinc-100 dark:border-zinc-800 px-3 sm:px-4 py-2 rounded-xl flex items-center gap-2 sm:gap-3">
               <p className="text-[9px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest leading-none">Total</p>
               <p className="text-base sm:text-lg font-black text-zinc-900 dark:text-white tracking-tighter leading-none">{pagination?.totalItems || 0}</p>
             </div>
-            <div className="bg-zinc-50 dark:bg-zinc-900/50 border border-zinc-100 dark:border-zinc-800 px-3 sm:px-4 py-2 rounded-xl flex items-center gap-2 sm:gap-3 transition-colors duration-300">
+            <div className="bg-zinc-50 dark:bg-zinc-900/50 border border-zinc-100 dark:border-zinc-800 px-3 sm:px-4 py-2 rounded-xl flex items-center gap-2 sm:gap-3">
               <p className="text-[9px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest leading-none">Avg</p>
               <p className="text-base sm:text-lg font-black text-indigo-600 dark:text-emerald-500 tracking-tighter leading-none">
-                {evaluations.length > 0
-                  ? Math.round(evaluations.reduce((acc, curr) => acc + curr.final_score, 0) / evaluations.length)
-                  : 0}%
+                {averageScore}%
               </p>
             </div>
           </div>
@@ -173,7 +174,7 @@ export default function AuditList() {
       </div>
 
       {/* Compact Filter Section */}
-      <div className="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-3 sm:p-4 shadow-sm transition-colors duration-300">
+      <div className="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-3 sm:p-4 shadow-sm">
         <div className="flex flex-col lg:flex-row gap-3 lg:items-end">
           {/* Filters Grid */}
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 sm:gap-3 flex-1">
@@ -182,7 +183,7 @@ export default function AuditList() {
               <label className="text-[9px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest block mb-1 ml-1">Agent</label>
               <div className="relative">
                 <select
-                  className="w-full bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg pl-3 pr-7 py-2 text-xs text-zinc-800 dark:text-zinc-100 outline-none focus:border-indigo-500 transition-all appearance-none cursor-pointer"
+                  className="w-full bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg pl-3 pr-7 py-2 text-xs text-zinc-800 dark:text-zinc-100 outline-none focus:border-indigo-500 appearance-none cursor-pointer"
                   value={selectedAgent}
                   onChange={(e) => setSelectedAgent(e.target.value)}
                 >
@@ -200,7 +201,7 @@ export default function AuditList() {
               <label className="text-[9px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest block mb-1 ml-1">From</label>
               <input
                 type="date"
-                className="w-full bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg px-3 py-2 text-xs text-zinc-800 dark:text-zinc-100 outline-none focus:border-indigo-500 transition-all dark:[color-scheme:dark]"
+                className="w-full bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg px-3 py-2 text-xs text-zinc-800 dark:text-zinc-100 outline-none focus:border-indigo-500 dark:[color-scheme:dark]"
                 value={startDate}
                 onChange={(e) => setStartDate(e.target.value)}
               />
@@ -211,7 +212,7 @@ export default function AuditList() {
               <label className="text-[9px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest block mb-1 ml-1">To</label>
               <input
                 type="date"
-                className="w-full bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg px-3 py-2 text-xs text-zinc-800 dark:text-zinc-100 outline-none focus:border-indigo-500 transition-all dark:[color-scheme:dark]"
+                className="w-full bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg px-3 py-2 text-xs text-zinc-800 dark:text-zinc-100 outline-none focus:border-indigo-500 dark:[color-scheme:dark]"
                 value={endDate}
                 onChange={(e) => setEndDate(e.target.value)}
               />
@@ -222,7 +223,7 @@ export default function AuditList() {
               <label className="text-[9px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest block mb-1 ml-1">Status</label>
               <div className="relative">
                 <select
-                  className="w-full bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg pl-3 pr-7 py-2 text-xs text-zinc-800 dark:text-zinc-100 outline-none focus:border-indigo-500 transition-all appearance-none cursor-pointer"
+                  className="w-full bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg pl-3 pr-7 py-2 text-xs text-zinc-800 dark:text-zinc-100 outline-none focus:border-indigo-500 appearance-none cursor-pointer"
                   value={statusFilter}
                   onChange={(e) => setStatusFilter(e.target.value)}
                 >
@@ -244,7 +245,7 @@ export default function AuditList() {
                 <input
                   type="text"
                   placeholder="Brand, type..."
-                  className="w-full bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg pl-7 pr-3 py-2 text-xs text-zinc-800 dark:text-zinc-100 outline-none focus:border-indigo-500 transition-all placeholder:text-zinc-400"
+                  className="w-full bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg pl-7 pr-3 py-2 text-xs text-zinc-800 dark:text-zinc-100 outline-none focus:border-indigo-500 placeholder:text-zinc-400"
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && handleApplyFilters()}
@@ -273,7 +274,7 @@ export default function AuditList() {
       </div>
 
       {/* List Container */}
-      <div className="bg-white dark:bg-zinc-950/50 rounded-[2.5rem] border border-zinc-200 dark:border-zinc-800 overflow-hidden shadow-sm dark:shadow-2xl backdrop-blur-sm transition-colors duration-300">
+      <div className="bg-white dark:bg-zinc-950/50 rounded-[2.5rem] border border-zinc-200 dark:border-zinc-800 overflow-hidden shadow-sm dark:shadow-2xl backdrop-blur-sm">
         <div className="overflow-x-auto -mx-4 sm:mx-0">
           <table className="w-full text-left border-collapse min-w-[720px]">
             <thead>
@@ -307,19 +308,16 @@ export default function AuditList() {
                   </td>
                 </tr>
               ) : (
-                <AnimatePresence mode="popLayout">
+                <>
                   {evaluations.map((audit) => (
-                    <motion.tr 
+                    <tr
                       key={audit.id}
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: isChangingPage ? 0.3 : 1 }}
-                      exit={{ opacity: 0 }}
-                      className="group hover:bg-zinc-50 dark:hover:bg-zinc-800/20 transition-all cursor-pointer"
+                      className={`group hover:bg-zinc-50 dark:hover:bg-zinc-800/20 cursor-pointer ${isChangingPage ? 'opacity-30' : ''}`}
                       onClick={() => navigate(`/evaluate/${audit.id}`)}
                     >
                     <td className="px-8 py-6">
                       <div className="flex items-center gap-4">
-                        <div className="w-10 h-10 rounded-xl bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 flex items-center justify-center text-zinc-400 group-hover:border-indigo-500 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-all">
+                        <div className="w-10 h-10 rounded-xl bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 flex items-center justify-center text-zinc-400 group-hover:border-indigo-500 group-hover:text-indigo-600 dark:group-hover:text-indigo-400">
                           <User size={18} />
                         </div>
                         <div>
@@ -400,9 +398,9 @@ export default function AuditList() {
                          </button>
                       </div>
                     </td>
-                  </motion.tr>
+                  </tr>
                 ))}
-              </AnimatePresence>
+                </>
               )}
             </tbody>
           </table>
@@ -410,7 +408,7 @@ export default function AuditList() {
 
         {/* Improved Pagination Footer */}
         {pagination && pagination.totalPages > 0 && (
-          <div className="bg-white dark:bg-zinc-950/50 border-t border-zinc-100 dark:border-zinc-800 px-8 py-6 flex flex-col md:flex-row items-center justify-between gap-6 transition-colors duration-300">
+          <div className="bg-white dark:bg-zinc-950/50 border-t border-zinc-100 dark:border-zinc-800 px-8 py-6 flex flex-col md:flex-row items-center justify-between gap-6">
             <div className="flex items-center gap-6">
               <div className="flex flex-col">
                 <span className="text-[10px] font-black text-zinc-400 dark:text-zinc-600 uppercase tracking-widest">Showing</span>

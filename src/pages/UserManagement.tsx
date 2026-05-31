@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { UserPlus, Search, Edit2, Trash2, Filter, User as UserIcon, Lock, Shield, Users, Briefcase, X } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion } from 'motion/react';
 import { User, UserRole, Department } from '../types';
 
 export default function UserManagement() {
@@ -44,11 +45,11 @@ export default function UserManagement() {
 
   return (
     <div className="space-y-12 max-w-[1600px] mx-auto" dir="ltr">
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 border-b border-zinc-200 dark:border-zinc-800 pb-10 transition-colors duration-300">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 border-b border-zinc-200 dark:border-zinc-800 pb-10">
         <div className="space-y-2">
           <div className="flex items-center gap-3">
             <div className="w-1.5 h-6 bg-indigo-600 rounded-full" />
-            <h2 className="text-4xl font-black text-zinc-900 dark:text-white tracking-tighter uppercase italic">User Accounts</h2>
+            <h2 className="text-2xl sm:text-3xl md:text-4xl font-black text-zinc-900 dark:text-white tracking-tighter uppercase italic">User Accounts</h2>
           </div>
           <p className="text-zinc-400 dark:text-zinc-500 text-[10px] font-black uppercase tracking-[0.4em] ml-4">Manage user accounts, roles, and system permission levels</p>
         </div>
@@ -65,13 +66,13 @@ export default function UserManagement() {
       </div>
 
       <div className="glass-card !p-0 overflow-hidden">
-        <div className="p-8 border-b border-zinc-100 dark:border-zinc-800/50 flex flex-col md:flex-row gap-6 items-center justify-between bg-zinc-50/30 dark:bg-zinc-950/20">
+        <div className="p-4 sm:p-6 lg:p-8 border-b border-zinc-100 dark:border-zinc-800/50 flex flex-col md:flex-row gap-6 items-center justify-between bg-zinc-50/30 dark:bg-zinc-950/20">
           <div className="relative w-full md:w-[480px] group">
             <Search className="absolute left-6 top-1/2 -translate-y-1/2 text-zinc-400 group-focus-within:text-indigo-600 transition-colors" size={18} />
             <input 
               type="text" 
               placeholder="Search user by name or username..." 
-              className="w-full bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl pl-16 pr-6 py-4 text-xs font-black uppercase tracking-tight outline-none focus:border-indigo-600 transition-all placeholder:text-zinc-300 dark:placeholder:text-zinc-700 italic shadow-sm" 
+              className="w-full bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl pl-16 pr-6 py-4 text-xs font-black uppercase tracking-tight outline-none focus:border-indigo-600 placeholder:text-zinc-300 dark:placeholder:text-zinc-700 italic shadow-sm"
             />
           </div>
           <div className="flex gap-4">
@@ -81,8 +82,8 @@ export default function UserManagement() {
           </div>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-left">
+        <div className="overflow-x-auto -mx-4 sm:mx-0">
+          <table className="w-full text-left min-w-[720px]">
             <thead>
               <tr className="bg-zinc-50/50 dark:bg-zinc-950/30 text-zinc-400 dark:text-zinc-600 text-[10px] uppercase font-black tracking-[0.2em] italic border-b border-zinc-100 dark:border-zinc-800">
                 <th className="px-10 py-6">User Name</th>
@@ -95,10 +96,10 @@ export default function UserManagement() {
             </thead>
             <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800/30">
               {users.map((u) => (
-                <tr key={u.id} className="hover:bg-zinc-50/50 dark:hover:bg-indigo-600/5 transition-all group">
+                <tr key={u.id} className="hover:bg-zinc-50/50 dark:hover:bg-indigo-600/5 group">
                   <td className="px-10 py-8">
                     <div className="flex items-center gap-5">
-                      <div className="w-12 h-12 rounded-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 flex items-center justify-center text-[12px] font-black text-indigo-600 group-hover:border-indigo-600 group-hover:scale-105 transition-all shadow-sm italic">
+                      <div className="w-12 h-12 rounded-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 flex items-center justify-center text-[12px] font-black text-indigo-600 group-hover:border-indigo-600 group-hover:scale-105 shadow-sm italic">
                         {u.display_name.charAt(0)}
                       </div>
                       <div>
@@ -143,7 +144,7 @@ export default function UserManagement() {
                     )}
                   </td>
                   <td className="px-10 py-8 pr-14 text-right">
-                    <div className="flex justify-end gap-3 opacity-0 group-hover:opacity-100 transition-all translate-x-4 group-hover:translate-x-0">
+                    <div className="flex justify-end gap-3 opacity-0 group-hover:opacity-100 translate-x-4 group-hover:translate-x-0">
                       <button className="p-3 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl text-zinc-400 hover:text-indigo-600 hover:border-indigo-600/30 transition-all shadow-sm">
                         <Edit2 size={16} />
                       </button>
@@ -167,35 +168,33 @@ export default function UserManagement() {
         </div>
       </div>
 
-      <AnimatePresence>
-        {showModal && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setShowModal(false)}
-              className="absolute inset-0 bg-black/90 backdrop-blur-xl"
-            />
+      {showModal && createPortal(
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6 overflow-y-auto">
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            onClick={() => setShowModal(false)}
+            className="absolute inset-0 bg-black/70 dark:bg-black/90 backdrop-blur-xl"
+          />
             <motion.div 
               initial={{ opacity: 0, scale: 0.95, y: 40 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 40 }}
               transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
-              className="bg-white dark:bg-black border border-zinc-200 dark:border-zinc-800 w-full max-w-2xl rounded-[3rem] overflow-hidden shadow-[0_0_80px_rgba(0,0,0,0.4)] relative transition-colors duration-300"
+              className="bg-white dark:bg-black border border-zinc-200 dark:border-zinc-800 w-full max-w-2xl rounded-[3rem] overflow-hidden shadow-[0_0_80px_rgba(0,0,0,0.4)] relative"
             >
               {/* Abstract decorative element for modal */}
               <div className="absolute top-0 left-1/2 -translate-x-1/2 w-64 h-1 bg-gradient-to-r from-transparent via-indigo-600 to-transparent" />
               
               {/* Modal Header */}
-              <div className="p-12 border-b border-zinc-100 dark:border-zinc-900 bg-zinc-50/30 dark:bg-zinc-950/20 relative">
+              <div className="p-6 sm:p-8 lg:p-12 border-b border-zinc-100 dark:border-zinc-900 bg-zinc-50/30 dark:bg-zinc-950/20 relative">
                 <div className="flex justify-between items-start">
                   <div className="flex items-center gap-6">
                     <div className="w-16 h-16 bg-black dark:bg-white rounded-2xl flex items-center justify-center shadow-2xl shadow-indigo-600/10 dark:shadow-white/10">
                       <UserPlus size={32} className="text-white dark:text-black" />
                     </div>
                     <div>
-                      <h3 className="text-3xl font-black text-zinc-900 dark:text-white uppercase tracking-tighter italic">Add New User</h3>
+                      <h3 className="text-2xl sm:text-3xl font-black text-zinc-900 dark:text-white uppercase tracking-tighter italic">Add New User</h3>
                       <p className="text-[10px] text-zinc-400 dark:text-zinc-500 font-black uppercase tracking-widest mt-1">Register a new user to the system</p>
                     </div>
                   </div>
@@ -208,8 +207,8 @@ export default function UserManagement() {
                 </div>
               </div>
 
-              <form onSubmit={handleSubmit} className="p-12 space-y-12">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
+              <form onSubmit={handleSubmit} className="p-6 sm:p-8 lg:p-12 space-y-8 lg:space-y-12">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 lg:gap-10">
                   {/* Display Name */}
                   <div className="space-y-4">
                     <label className="text-[10px] font-black text-zinc-400 dark:text-zinc-600 uppercase tracking-[0.3em] ml-1 flex items-center gap-2 italic">
@@ -218,7 +217,7 @@ export default function UserManagement() {
                     <input 
                       type="text" 
                       placeholder="e.g. John Doe"
-                      className="w-full bg-slate-50 dark:bg-zinc-900/50 border border-slate-200 dark:border-zinc-800 rounded-2xl px-6 py-5 text-sm font-black text-zinc-900 dark:text-white outline-none focus:border-indigo-600 transition-all shadow-inner placeholder:text-zinc-300 dark:placeholder:text-zinc-800 italic"
+                      className="w-full bg-slate-50 dark:bg-zinc-900/50 border border-slate-200 dark:border-zinc-800 rounded-2xl px-6 py-5 text-sm font-black text-zinc-900 dark:text-white outline-none focus:border-indigo-600 shadow-inner placeholder:text-zinc-300 dark:placeholder:text-zinc-800 italic"
                       value={formData.display_name}
                       onChange={(e) => setFormData({...formData, display_name: e.target.value})}
                       required 
@@ -233,7 +232,7 @@ export default function UserManagement() {
                     <input 
                       type="text" 
                       placeholder="e.g. johndoe"
-                      className="w-full bg-slate-50 dark:bg-zinc-900/50 border border-slate-200 dark:border-zinc-800 rounded-2xl px-6 py-5 text-sm font-mono font-black text-indigo-600 dark:text-indigo-400 outline-none focus:border-indigo-600 transition-all shadow-inner placeholder:text-zinc-300 dark:placeholder:text-zinc-800 italic"
+                      className="w-full bg-slate-50 dark:bg-zinc-900/50 border border-slate-200 dark:border-zinc-800 rounded-2xl px-6 py-5 text-sm font-mono font-black text-indigo-600 dark:text-indigo-400 outline-none focus:border-indigo-600 shadow-inner placeholder:text-zinc-300 dark:placeholder:text-zinc-800 italic"
                       value={formData.username}
                       onChange={(e) => setFormData({...formData, username: e.target.value})}
                       required 
@@ -248,7 +247,7 @@ export default function UserManagement() {
                     <input 
                       type="password" 
                       placeholder="••••••••••••"
-                      className="w-full bg-slate-50 dark:bg-zinc-900/50 border border-slate-200 dark:border-zinc-800 rounded-2xl px-6 py-5 text-sm font-black text-zinc-900 dark:text-white outline-none focus:border-indigo-600 transition-all shadow-inner"
+                      className="w-full bg-slate-50 dark:bg-zinc-900/50 border border-slate-200 dark:border-zinc-800 rounded-2xl px-6 py-5 text-sm font-black text-zinc-900 dark:text-white outline-none focus:border-indigo-600 shadow-inner"
                       value={formData.password}
                       onChange={(e) => setFormData({...formData, password: e.target.value})}
                       required 
@@ -261,7 +260,7 @@ export default function UserManagement() {
                        Role
                     </label>
                     <select 
-                      className="w-full bg-slate-50 dark:bg-zinc-900/50 border border-slate-200 dark:border-zinc-800 rounded-2xl px-6 py-5 text-sm font-black text-zinc-900 dark:text-white outline-none focus:border-indigo-600 transition-all appearance-none cursor-pointer shadow-inner italic"
+                      className="w-full bg-slate-50 dark:bg-zinc-900/50 border border-slate-200 dark:border-zinc-800 rounded-2xl px-6 py-5 text-sm font-black text-zinc-900 dark:text-white outline-none focus:border-indigo-600 appearance-none cursor-pointer shadow-inner italic"
                       value={formData.role}
                       onChange={(e) => {
                         const role = e.target.value as UserRole;
@@ -279,7 +278,7 @@ export default function UserManagement() {
                           Department
                       </label>
                       <select 
-                        className="w-full bg-slate-50 dark:bg-zinc-900/50 border border-slate-200 dark:border-zinc-800 rounded-2xl px-6 py-5 text-sm font-black text-zinc-900 dark:text-white outline-none focus:border-indigo-600 transition-all appearance-none cursor-pointer shadow-inner italic"
+                        className="w-full bg-slate-50 dark:bg-zinc-900/50 border border-slate-200 dark:border-zinc-800 rounded-2xl px-6 py-5 text-sm font-black text-zinc-900 dark:text-white outline-none focus:border-indigo-600 appearance-none cursor-pointer shadow-inner italic"
                         value={formData.department}
                         onChange={(e) => setFormData({...formData, department: e.target.value as Department})}
                       >
@@ -295,7 +294,7 @@ export default function UserManagement() {
                          Team Leader
                       </label>
                       <select 
-                        className="w-full bg-slate-50 dark:bg-zinc-900/50 border border-slate-200 dark:border-zinc-800 rounded-2xl px-6 py-5 text-sm font-black text-zinc-900 dark:text-white outline-none focus:border-indigo-600 transition-all appearance-none cursor-pointer shadow-inner italic"
+                        className="w-full bg-slate-50 dark:bg-zinc-900/50 border border-slate-200 dark:border-zinc-800 rounded-2xl px-6 py-5 text-sm font-black text-zinc-900 dark:text-white outline-none focus:border-indigo-600 appearance-none cursor-pointer shadow-inner italic"
                         value={formData.tl_id}
                         onChange={(e) => setFormData({...formData, tl_id: e.target.value})}
                         required={formData.role === 'agent'}
@@ -326,9 +325,9 @@ export default function UserManagement() {
                 </div>
               </form>
             </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
+        </div>,
+        document.body
+      )}
     </div>
   );
 }

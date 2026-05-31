@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useAuth } from '../context/AuthContext';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -181,13 +182,16 @@ export default function EvaluationForm() {
           const found = eData.find((e: any) => e.id === parseInt(id));
           if (found) {
             const parsedData = typeof found.data === 'string' ? JSON.parse(found.data) : found.data;
-            // Ensure the top-level status from the database overrides any status stored inside the data JSON
-            setFormData({
+            // Merge with previous defaults so missing fields (common_issues, feedback subfields) don't crash JSX
+            setFormData((prev: any) => ({
+              ...prev,
               ...found,
               ...parsedData,
               status: found.status,
-              responses: parsedData.responses || {}
-            });
+              responses: parsedData?.responses || {},
+              common_issues: parsedData?.common_issues || [],
+              feedback: { ...prev.feedback, ...(parsedData?.feedback || {}) }
+            }));
           }
 
           const hRes = await fetch(`/api/evaluations/${id}/escalation-history`);
@@ -359,70 +363,71 @@ export default function EvaluationForm() {
     }
   };
 
-  return (
-    <div className="max-w-[1200px] mx-auto pb-20 space-y-12 font-sans bg-white/40 dark:bg-black/40 p-4 md:p-8 rounded-[3rem] border border-zinc-200 dark:border-zinc-800/40 shadow-sm dark:shadow-2xl backdrop-blur-xl transition-colors duration-300">
-      {/* Workflow Action Modal */}
-      <AnimatePresence>
-        {showActionModal && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-black/90 backdrop-blur-md">
-            <motion.div
-              initial={{ opacity: 0, scale: 0.9, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.9, y: 20 }}
-              className="bg-zinc-900 border border-zinc-800 rounded-[2.5rem] p-10 w-full max-w-lg shadow-[0_0_80px_rgba(0,0,0,0.8)] relative overflow-hidden"
-            >
-              {/* Subtle gradient accent */}
-              <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-emerald-500 to-transparent opacity-50" />
-              
-              <h3 className="text-2xl font-black text-white uppercase tracking-tighter mb-8 text-center">
-                CONFIRM ACTION: <span className="text-emerald-500">{pendingAction?.toUpperCase()}</span>
-              </h3>
+  const actionModal = showActionModal ? createPortal(
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6 bg-black/70 backdrop-blur-md overflow-y-auto"
+      onClick={() => setShowActionModal(false)}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-[2rem] sm:rounded-[2.5rem] p-6 sm:p-8 lg:p-10 w-full max-w-lg shadow-2xl dark:shadow-[0_0_80px_rgba(0,0,0,0.8)] relative overflow-hidden my-auto"
+      >
+          {/* Subtle gradient accent */}
+          <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-emerald-500 to-transparent opacity-50" />
 
-              <div className="space-y-6">
-                <div className="space-y-3">
-                  <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest block ml-2">
-                    Add Comment {(pendingAction === 'escalated' || pendingAction === 'rejected') && <span className="text-rose-500 font-bold">*</span>}
-                  </label>
-                  <div className="relative group">
-                    <textarea 
-                      className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl p-6 text-sm text-white h-44 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/20 transition-all resize-none placeholder:text-zinc-700 shadow-inner"
-                      placeholder="Enter your detailed reasoning here..."
-                      value={actionComment}
-                      onChange={(e) => setActionComment(e.target.value)}
-                    />
-                    <div className="absolute top-4 right-4 pointer-events-none opacity-20 group-focus-within:opacity-40 transition-opacity">
-                      <FileText size={18} className="text-zinc-500" />
-                    </div>
-                  </div>
-                </div>
+          <h3 className="text-lg sm:text-xl md:text-2xl font-black text-zinc-900 dark:text-white uppercase tracking-tighter mb-6 sm:mb-8 text-center">
+            CONFIRM ACTION: <span className="text-emerald-600 dark:text-emerald-500">{pendingAction?.toUpperCase()}</span>
+          </h3>
 
-                <div className="flex gap-4 pt-4">
-                  <button 
-                    onClick={() => setShowActionModal(false)}
-                    className="flex-1 py-4 rounded-xl bg-zinc-800 text-zinc-400 font-black text-[10px] uppercase tracking-widest border border-zinc-700 hover:bg-zinc-700 hover:text-white transition-all active:scale-[0.98]"
-                  >
-                    Cancel
-                  </button>
-                  <button 
-                    onClick={handleWorkflowAction}
-                    disabled={isSubmitting}
-                    className="flex-1 py-4 rounded-xl bg-emerald-600 text-white font-black text-[10px] uppercase tracking-widest shadow-xl shadow-emerald-500/20 hover:bg-emerald-500 transition-all active:scale-[0.98] flex items-center justify-center gap-2"
-                  >
-                    {isSubmitting ? (
-                      <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                    ) : (
-                      <>Confirm {pendingAction}</>
-                    )}
-                  </button>
+          <div className="space-y-6">
+            <div className="space-y-3">
+              <label className="text-[10px] font-black text-zinc-500 dark:text-zinc-400 uppercase tracking-widest block ml-2">
+                Add Comment {(pendingAction === 'escalated' || pendingAction === 'rejected') && <span className="text-rose-500 font-bold">*</span>}
+              </label>
+              <div className="relative group">
+                <textarea
+                  className="w-full bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-4 sm:p-6 text-sm text-zinc-900 dark:text-white h-32 sm:h-44 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/20 resize-none placeholder:text-zinc-400 dark:placeholder:text-zinc-700 shadow-inner"
+                  placeholder="Enter your detailed reasoning here..."
+                  value={actionComment}
+                  onChange={(e) => setActionComment(e.target.value)}
+                />
+                <div className="absolute top-4 right-4 pointer-events-none opacity-20 group-focus-within:opacity-40 transition-opacity">
+                  <FileText size={18} className="text-zinc-500" />
                 </div>
               </div>
-            </motion.div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 pt-2 sm:pt-4">
+              <button
+                onClick={() => setShowActionModal(false)}
+                className="flex-1 py-3 sm:py-4 rounded-xl bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 font-black text-[10px] uppercase tracking-widest border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-700 hover:text-zinc-900 dark:hover:text-white transition-all active:scale-[0.98]"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleWorkflowAction}
+                disabled={isSubmitting}
+                className="flex-1 py-3 sm:py-4 rounded-xl bg-emerald-600 text-white font-black text-[10px] uppercase tracking-widest shadow-xl shadow-emerald-500/20 hover:bg-emerald-500 transition-all active:scale-[0.98] flex items-center justify-center gap-2 disabled:opacity-60"
+              >
+                {isSubmitting ? (
+                  <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                ) : (
+                  <>Confirm {pendingAction}</>
+                )}
+              </button>
+            </div>
           </div>
-        )}
-      </AnimatePresence>
+      </div>
+    </div>,
+    document.body
+  ) : null;
+
+  return (
+    <div className="max-w-[1200px] mx-auto pb-20 space-y-12 font-sans bg-white/95 dark:bg-black/95 p-4 md:p-8 rounded-[3rem] border border-zinc-200 dark:border-zinc-800/40 shadow-sm dark:shadow-2xl">
+      {actionModal}
 
       {/* Header Block */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center bg-white dark:bg-zinc-950/80 p-8 rounded-[2rem] border border-zinc-100 dark:border-zinc-800 relative shadow-sm dark:shadow-inner overflow-hidden transition-colors duration-300">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center bg-white dark:bg-zinc-950/80 p-4 sm:p-6 lg:p-8 rounded-[2rem] border border-zinc-100 dark:border-zinc-800 relative shadow-sm dark:shadow-inner overflow-hidden">
         <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-600/5 blur-[80px] -z-10" />
         <div className="flex items-center gap-4">
           <div className="p-3 bg-indigo-500/10 rounded-2xl border border-indigo-500/20 text-indigo-600 dark:text-emerald-500">
@@ -461,20 +466,20 @@ export default function EvaluationForm() {
       )}
 
       {/* 1. EVALUATION SUMMARY */}
-      <section className="bg-white/40 dark:bg-zinc-950/40 rounded-[2.5rem] border border-zinc-200 dark:border-zinc-900 p-8 space-y-8 transition-colors duration-300">
+      <section className="bg-white/40 dark:bg-zinc-950/40 rounded-[2.5rem] border border-zinc-200 dark:border-zinc-900 p-4 sm:p-6 lg:p-8 space-y-6 sm:space-y-8">
         <div className="flex items-center gap-3 pb-6 border-b border-zinc-100 dark:border-zinc-900">
           <div className="w-[1px] h-4 bg-indigo-600 dark:bg-emerald-500" />
           <h2 className="text-[11px] font-black text-indigo-600 dark:text-emerald-500 uppercase tracking-[0.3em]">Evaluation Summary</h2>
         </div>
         
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 sm:gap-6 lg:gap-8">
           <div className="space-y-3">
             <label className="text-[9px] font-black text-zinc-400 dark:text-zinc-600 uppercase tracking-widest block">Agent Name</label>
             <select 
               value={formData.agent_id}
               disabled={isReadOnly}
               onChange={(e) => setFormData({...formData, agent_id: e.target.value})}
-              className="w-full bg-white dark:bg-zinc-900 border border-zinc-100 dark:border-zinc-800 rounded-xl px-4 py-3 text-xs text-zinc-800 dark:text-white focus:border-indigo-500 outline-none transition-all appearance-none"
+              className="w-full bg-white dark:bg-zinc-900 border border-zinc-100 dark:border-zinc-800 rounded-xl px-4 py-3 text-xs text-zinc-800 dark:text-white focus:border-indigo-500 outline-none appearance-none"
             >
               <option value="">Select Agent</option>
               {agents.map(a => <option key={a.id} value={a.id}>{a.display_name}</option>)}
@@ -493,7 +498,7 @@ export default function EvaluationForm() {
               value={formData.date}
               disabled={isReadOnly}
               onChange={(e) => setFormData({...formData, date: e.target.value})}
-              className="w-full bg-white dark:bg-zinc-900 border border-zinc-100 dark:border-zinc-800 rounded-xl px-4 py-3 text-xs text-zinc-800 dark:text-white focus:border-indigo-500 outline-none transition-all dark:inverted-date-icon" 
+              className="w-full bg-white dark:bg-zinc-900 border border-zinc-100 dark:border-zinc-800 rounded-xl px-4 py-3 text-xs text-zinc-800 dark:text-white focus:border-indigo-500 outline-none dark:inverted-date-icon"
             />
           </div>
           <div className="space-y-3">
@@ -502,7 +507,7 @@ export default function EvaluationForm() {
               value={formData.call_type}
               disabled={isReadOnly}
               onChange={(e) => setFormData({...formData, call_type: e.target.value})}
-              className="w-full bg-white dark:bg-zinc-900 border border-zinc-100 dark:border-zinc-800 rounded-xl px-4 py-3 text-xs text-zinc-800 dark:text-white focus:border-indigo-500 outline-none transition-all"
+              className="w-full bg-white dark:bg-zinc-900 border border-zinc-100 dark:border-zinc-800 rounded-xl px-4 py-3 text-xs text-zinc-800 dark:text-white focus:border-indigo-500 outline-none"
             >
               <option value="">Select Type</option>
               {formOptions.call_type.map((opt: any) => (
@@ -514,13 +519,13 @@ export default function EvaluationForm() {
       </section>
 
       {/* 2. CALL METADATA */}
-      <section className="bg-white/40 dark:bg-zinc-950/40 rounded-[2.5rem] border border-zinc-200 dark:border-zinc-900 p-8 space-y-8 transition-colors duration-300">
+      <section className="bg-white/40 dark:bg-zinc-950/40 rounded-[2.5rem] border border-zinc-200 dark:border-zinc-900 p-4 sm:p-6 lg:p-8 space-y-6 sm:space-y-8">
         <div className="flex items-center gap-3 pb-6 border-b border-zinc-100 dark:border-zinc-900">
           <div className="w-[1px] h-4 bg-indigo-600 dark:bg-emerald-500" />
           <h2 className="text-[11px] font-black text-indigo-600 dark:text-emerald-500 uppercase tracking-[0.3em]">Call Metadata</h2>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6 lg:gap-8">
           <div className="space-y-3">
             <label className="text-[9px] font-black text-zinc-400 dark:text-zinc-600 uppercase tracking-widest block">Brand</label>
             <select 
@@ -584,7 +589,7 @@ export default function EvaluationForm() {
             <div className="w-8 h-8 rounded-lg bg-indigo-500/10 dark:bg-emerald-500/10 border border-indigo-500/20 dark:border-emerald-500/20 flex items-center justify-center text-indigo-600 dark:text-emerald-500 text-xs font-black">
               0{idx + 3}
             </div>
-            <h2 className="text-[12px] font-black text-zinc-800 dark:text-white px-3 py-1 bg-white/50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg uppercase tracking-widest transition-colors duration-300">
+            <h2 className="text-[12px] font-black text-zinc-800 dark:text-white px-3 py-1 bg-white/50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg uppercase tracking-widest">
               {section.title}
             </h2>
           </div>
@@ -593,7 +598,7 @@ export default function EvaluationForm() {
             {section.items.map((item: any) => (
               <div 
                 key={item.id} 
-                className="group flex flex-col md:flex-row md:items-center justify-between p-6 bg-white/40 dark:bg-zinc-900/20 border border-zinc-200 dark:border-zinc-900 rounded-[1.5rem] hover:border-indigo-500/30 dark:hover:border-emerald-500/30 transition-all hover:bg-white/60 dark:hover:bg-zinc-900/30 shadow-sm"
+                className="group flex flex-col md:flex-row md:items-center justify-between p-6 bg-white/40 dark:bg-zinc-900/20 border border-zinc-200 dark:border-zinc-900 rounded-[1.5rem] hover:border-indigo-500/30 dark:hover:border-emerald-500/30 hover:bg-white/60 dark:hover:bg-zinc-900/30 shadow-sm"
               >
                 <div className="flex items-center gap-4">
                   <div className="flex flex-col">
@@ -634,7 +639,7 @@ export default function EvaluationForm() {
                           : 'bg-zinc-200 dark:bg-zinc-950 border-zinc-300 dark:border-zinc-800'
                       } ${formData.responses[item.id] === 'N/A' ? 'opacity-20 pointer-events-none' : ''} ${isReadOnly ? 'cursor-default' : ''}`}
                    >
-                      <div className={`absolute left-1 w-5 h-5 rounded-full transition-all flex items-center justify-center ${
+                      <div className={`absolute left-1 w-5 h-5 rounded-full flex items-center justify-center ${
                         formData.responses[item.id] === 'No'
                           ? 'translate-x-7 bg-rose-500 shadow-lg shadow-rose-500/40'
                           : 'bg-white dark:bg-zinc-800 shadow-sm dark:shadow-inner'
@@ -660,7 +665,7 @@ export default function EvaluationForm() {
       ))}
 
       {/* FINAL DETAILS SECTION 8 */}
-      <section className="bg-white/40 dark:bg-zinc-950/40 rounded-[3rem] border border-zinc-200 dark:border-zinc-900 p-10 space-y-12 transition-colors duration-300 shadow-sm">
+      <section className="bg-white/40 dark:bg-zinc-950/40 rounded-[3rem] border border-zinc-200 dark:border-zinc-900 p-10 space-y-12 shadow-sm">
         <div className="flex items-center gap-3 ml-2">
             <div className="w-8 h-8 rounded-lg bg-indigo-500/10 dark:bg-emerald-500/10 border border-indigo-500/20 dark:border-emerald-500/20 flex items-center justify-center text-indigo-600 dark:text-emerald-500 text-xs font-black">
               08
@@ -670,7 +675,7 @@ export default function EvaluationForm() {
             </h2>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6 lg:gap-8">
           <div className="space-y-8">
             <div className="space-y-4">
               <label className="text-[10px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest block">Common Issues</label>
@@ -756,7 +761,7 @@ export default function EvaluationForm() {
       </section>
 
       {/* DETAILED FEEDBACK SECTION 9 */}
-      <section className="bg-white/40 dark:bg-zinc-950/40 rounded-[3rem] border border-zinc-200 dark:border-zinc-900 p-10 space-y-12 transition-colors duration-300 shadow-sm">
+      <section className="bg-white/40 dark:bg-zinc-950/40 rounded-[3rem] border border-zinc-200 dark:border-zinc-900 p-10 space-y-12 shadow-sm">
         <div className="flex items-center gap-3 ml-2">
             <div className="w-8 h-8 rounded-lg bg-indigo-500/10 dark:bg-emerald-500/10 border border-indigo-500/20 dark:border-emerald-500/20 flex items-center justify-center text-indigo-600 dark:text-emerald-500 text-xs font-black">
               09
@@ -766,7 +771,7 @@ export default function EvaluationForm() {
             </h2>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6 lg:gap-8">
            {[
              { id: 'process', label: 'Process to Adherence' },
              { id: 'problem_solving', label: 'Problem Solving & Accuracy' },
@@ -776,7 +781,7 @@ export default function EvaluationForm() {
             <div key={fb.id} className="space-y-4">
               <label className="text-[10px] font-black text-zinc-400 dark:text-zinc-600 uppercase tracking-widest block ml-2">{fb.label}</label>
               <textarea 
-                className="w-full bg-white dark:bg-zinc-950/60 border border-zinc-100 dark:border-zinc-900 rounded-[1.5rem] p-5 text-xs text-zinc-800 dark:text-zinc-400 outline-none focus:border-indigo-500/20 dark:focus:border-emerald-500/20 h-24 resize-none placeholder:text-zinc-300 dark:placeholder:text-zinc-800 transition-all focus:bg-white dark:focus:bg-zinc-950"
+                className="w-full bg-white dark:bg-zinc-950/60 border border-zinc-100 dark:border-zinc-900 rounded-[1.5rem] p-5 text-xs text-zinc-800 dark:text-zinc-400 outline-none focus:border-indigo-500/20 dark:focus:border-emerald-500/20 h-24 resize-none placeholder:text-zinc-300 dark:placeholder:text-zinc-800 focus:bg-white dark:focus:bg-zinc-950"
                 placeholder={`Enter ${fb.label.toLowerCase()} feedback...`}
                 readOnly={isReadOnly}
                 value={(formData.feedback as any)[fb.id]}
@@ -839,7 +844,7 @@ export default function EvaluationForm() {
       </div>
 
       {escalationHistory.length > 0 && (
-        <div className="glass-card p-10 mt-12 border-l-4 border-indigo-500 shadow-[0_0_50px_rgba(99,102,241,0.05)]">
+        <div className="glass-card p-4 sm:p-6 lg:p-8 mt-8 sm:mb-12 border-l-4 border-indigo-500 shadow-[0_0_50px_rgba(99,102,241,0.05)]">
           <div className="flex items-center justify-between mb-10 pb-6 border-b border-zinc-800/50">
             <div className="flex items-center gap-3">
               <History size={20} className="text-indigo-400" />

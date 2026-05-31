@@ -96,10 +96,10 @@ export default function FormSettings() {
   }
 
   return (
-    <div className="p-8 space-y-8 max-w-[1600px] mx-auto">
+    <div className="p-4 sm:p-6 lg:p-8 space-y-6 sm:space-y-8 max-w-[1600px] mx-auto">
       {/* Header Area */}
       <div className="flex flex-col gap-2">
-        <h1 className="text-4xl font-black text-zinc-900 dark:text-white tracking-tighter flex items-center gap-4 italic uppercase">
+        <h1 className="text-2xl sm:text-3xl md:text-4xl font-black text-zinc-900 dark:text-white tracking-tighter flex items-center gap-4 italic uppercase">
           <div className="w-1.5 h-10 bg-indigo-600 rounded-full" />
           Protocol Engine
         </h1>
@@ -108,12 +108,12 @@ export default function FormSettings() {
         </p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 lg:gap-8">
         {FIELD_GROUPS.filter(g => g.id !== 'eval_question' && g.id !== 'eval_section').map(group => (
-          <div key={group.id} className="glass-card !p-10 flex flex-col gap-8 group/card transition-all hover:bg-white/60 dark:hover:bg-zinc-900/30">
+          <div key={group.id} className="glass-card !p-10 flex flex-col gap-8 group/card hover:bg-white/60 dark:hover:bg-zinc-900/30">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <div className={`p-3 rounded-2xl bg-zinc-50 dark:bg-zinc-900 border border-zinc-100 dark:border-zinc-800 transition-all group-hover/card:scale-110`}>
+                <div className={`p-3 rounded-2xl bg-zinc-50 dark:bg-zinc-900 border border-zinc-100 dark:border-zinc-800 group-hover/card:scale-110`}>
                   <group.icon size={20} className={group.color} />
                 </div>
                 <h3 className="text-[11px] font-black text-zinc-900 dark:text-white uppercase tracking-[0.3em] italic">
@@ -127,7 +127,7 @@ export default function FormSettings() {
               <input 
                 type="text"
                 placeholder={`Deploy new ${group.label.slice(0, -1)}...`}
-                className="flex-1 bg-white/50 dark:bg-zinc-950/50 border border-zinc-100 dark:border-zinc-800 rounded-2xl px-6 py-4 text-[11px] font-black text-zinc-900 dark:text-white outline-none focus:border-indigo-500 transition-all placeholder:text-zinc-300 dark:placeholder:text-zinc-800 placeholder:italic placeholder:font-medium shadow-inner"
+                className="flex-1 bg-white/50 dark:bg-zinc-950/50 border border-zinc-100 dark:border-zinc-800 rounded-2xl px-6 py-4 text-[11px] font-black text-zinc-900 dark:text-white outline-none focus:border-indigo-500 placeholder:text-zinc-300 dark:placeholder:text-zinc-800 placeholder:italic placeholder:font-medium shadow-inner"
                 value={newValues[group.id] || ''}
                 onChange={e => setNewValues({ ...newValues, [group.id]: e.target.value })}
                 onKeyDown={e => e.key === 'Enter' && handleQuickAdd(group.id)}
@@ -145,7 +145,7 @@ export default function FormSettings() {
               {getSettingsByType(group.id).map(item => (
                 <div 
                   key={item.id}
-                  className="flex items-center gap-3 px-5 py-2.5 bg-white dark:bg-zinc-900/80 border border-zinc-100 dark:border-zinc-800 rounded-[1.2rem] group transition-all hover:border-indigo-500/20 shadow-sm"
+                  className="flex items-center gap-3 px-5 py-2.5 bg-white dark:bg-zinc-900/80 border border-zinc-100 dark:border-zinc-800 rounded-[1.2rem] group hover:border-indigo-500/20 shadow-sm"
                 >
                   <span className="text-[9px] font-black text-zinc-900 dark:text-zinc-200 uppercase tracking-tighter italic">{item.label_en}</span>
                   <button 
@@ -167,7 +167,7 @@ export default function FormSettings() {
       </div>
 
       {/* Evaluation Structure Section */}
-      <div className="grid grid-cols-1 gap-8">
+      <div className="grid grid-cols-1 gap-4 sm:gap-6 lg:gap-8">
         <div className="glass-card !p-10">
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-12">
             <div className="flex items-center gap-4">
@@ -175,7 +175,7 @@ export default function FormSettings() {
                 <ListChecks size={24} className="text-white" />
               </div>
               <div>
-                <h3 className="text-2xl font-black text-zinc-900 dark:text-white uppercase tracking-tighter italic">Evaluation Matrix</h3>
+                <h3 className="text-xl sm:text-2xl font-black text-zinc-900 dark:text-white uppercase tracking-tighter italic">Evaluation Matrix</h3>
                 <p className="text-zinc-400 dark:text-zinc-500 text-[9px] font-black uppercase tracking-widest mt-1">Personnel assessment protocol parameters</p>
               </div>
             </div>
@@ -184,7 +184,7 @@ export default function FormSettings() {
               <input 
                 type="text"
                 placeholder="Initialize Section..."
-                className="flex-1 md:w-80 bg-zinc-50 dark:bg-zinc-950/50 border border-zinc-100 dark:border-zinc-800 rounded-2xl px-6 py-4 text-[11px] font-bold text-zinc-900 dark:text-white outline-none focus:border-indigo-500 transition-all font-medium italic"
+                className="flex-1 md:w-80 bg-zinc-50 dark:bg-zinc-950/50 border border-zinc-100 dark:border-zinc-800 rounded-2xl px-6 py-4 text-[11px] font-bold text-zinc-900 dark:text-white outline-none focus:border-indigo-500 font-medium italic"
                 value={newValues['eval_section'] || ''}
                 onChange={e => setNewValues({ ...newValues, ['eval_section']: e.target.value })}
               />
@@ -197,7 +197,7 @@ export default function FormSettings() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6 lg:gap-8">
              {settings.filter(s => s.field_type === 'eval_section').map(section => (
                <div key={section.id} className="bg-zinc-50/50 dark:bg-white/5 border border-zinc-100 dark:border-zinc-800/50 rounded-[2.5rem] p-8 space-y-8 shadow-sm">
                  <div className="flex items-center justify-between">
@@ -213,7 +213,7 @@ export default function FormSettings() {
                    <input 
                     type="text" 
                     placeholder="Error Description / Parameter..."
-                    className="flex-1 bg-white dark:bg-zinc-900 border border-zinc-100 dark:border-zinc-800 rounded-2xl px-5 py-4 text-[11px] font-bold text-zinc-900 dark:text-white outline-none focus:border-indigo-500 transition-all shadow-sm italic"
+                    className="flex-1 bg-white dark:bg-zinc-900 border border-zinc-100 dark:border-zinc-800 rounded-2xl px-5 py-4 text-[11px] font-bold text-zinc-900 dark:text-white outline-none focus:border-indigo-500 shadow-sm italic"
                     value={newValues[`q_${section.value}`] || ''}
                     onChange={e => setNewValues({ ...newValues, [`q_${section.value}`]: e.target.value })}
                    />
@@ -221,7 +221,7 @@ export default function FormSettings() {
                     <input 
                       type="number"
                       placeholder="Deduct"
-                      className="w-28 bg-white dark:bg-zinc-900 border border-zinc-100 dark:border-zinc-800 rounded-2xl px-4 py-4 text-[11px] font-black text-rose-600 dark:text-rose-500 outline-none focus:border-rose-500 transition-all shadow-sm"
+                      className="w-28 bg-white dark:bg-zinc-900 border border-zinc-100 dark:border-zinc-800 rounded-2xl px-4 py-4 text-[11px] font-black text-rose-600 dark:text-rose-500 outline-none focus:border-rose-500 shadow-sm"
                       value={newValues[`q_${section.value}_weight`] || '5'}
                       onChange={e => setNewValues({ ...newValues, [`q_${section.value}_weight`]: e.target.value })}
                     />
@@ -260,7 +260,7 @@ export default function FormSettings() {
 
                  <div className="flex flex-wrap gap-2 pt-4">
                    {settings.filter(s => s.field_type === 'eval_question' && JSON.parse(s.value).section === section.value).map(q => (
-                     <div key={q.id} className="flex items-center gap-3 px-5 py-2.5 bg-white dark:bg-zinc-900 border border-zinc-100 dark:border-zinc-800/80 rounded-2xl group transition-all hover:border-indigo-500/20 shadow-sm">
+                     <div key={q.id} className="flex items-center gap-3 px-5 py-2.5 bg-white dark:bg-zinc-900 border border-zinc-100 dark:border-zinc-800/80 rounded-2xl group hover:border-indigo-500/20 shadow-sm">
                        <span className="text-[10px] font-black text-zinc-800 dark:text-zinc-200 uppercase tracking-tight">{q.label_en}</span>
                        <div className="flex items-center gap-2">
                          <div className="px-2 py-0.5 bg-rose-500/5 dark:bg-rose-500/10 border border-rose-500/10 rounded-lg">

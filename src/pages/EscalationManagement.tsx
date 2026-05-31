@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { motion, AnimatePresence } from 'motion/react';
@@ -162,14 +163,14 @@ export default function EscalationManagement() {
   };
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6 sm:space-y-8">
       {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 border-b border-zinc-200 dark:border-zinc-800 pb-8 transition-colors duration-300">
+      <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 border-b border-zinc-200 dark:border-zinc-800 pb-8">
         <div>
-          <h2 className="text-3xl font-light text-zinc-900 dark:text-white tracking-tight mb-1">Escalation Management</h2>
+          <h2 className="text-2xl sm:text-3xl font-light text-zinc-900 dark:text-white tracking-tight mb-1">Escalation Management</h2>
           <p className="text-zinc-500 text-sm">Review, approve, or reject disputed interactions and track audit history.</p>
         </div>
-        <div className="flex bg-zinc-50 dark:bg-zinc-950 p-1 rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-xl transition-colors duration-300">
+        <div className="flex bg-zinc-50 dark:bg-zinc-950 p-1 rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-xl">
           <button 
             onClick={() => setActiveTab('pending')}
             className={`px-6 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${
@@ -199,7 +200,7 @@ export default function EscalationManagement() {
                 initial={{ opacity: 0, scale: 0.95 }}
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.95 }}
-                className="glass-card flex flex-col md:flex-row items-center gap-8 p-6 hover:border-indigo-500/30 transition-all group"
+                className="glass-card flex flex-col md:flex-row items-center gap-8 p-6 hover:border-indigo-500/30 group"
               >
                 <div className="flex items-center gap-6 flex-1">
                   <div className="w-14 h-14 rounded-2xl bg-indigo-600/10 border border-indigo-500/20 flex items-center justify-center text-indigo-600 dark:text-indigo-400">
@@ -244,7 +245,7 @@ export default function EscalationManagement() {
                 </div>
               </motion.div>
             )) : (
-              <div className="text-center py-20 bg-zinc-950/20 rounded-[2rem] border border-zinc-800/50">
+              <div className="text-center py-12 sm:py-20 bg-zinc-950/20 rounded-[2rem] border border-zinc-800/50">
                 <Bell className="mx-auto text-zinc-800 mb-4" size={40} />
                 <p className="text-zinc-400 font-medium">No pending escalations at the moment.</p>
               </div>
@@ -252,7 +253,7 @@ export default function EscalationManagement() {
           </AnimatePresence>
         </div>
       ) : (
-        <div className="glass-card p-0 overflow-hidden bg-white dark:bg-zinc-900/40 border-zinc-200 dark:border-zinc-800 transition-colors duration-300 shadow-sm">
+        <div className="glass-card p-0 overflow-hidden bg-white dark:bg-zinc-900/40 border-zinc-200 dark:border-zinc-800 shadow-sm">
           <div className="p-6 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-950/50 flex justify-between items-center transition-colors">
             <div className="flex items-center gap-3">
               <History className="text-indigo-600 dark:text-indigo-400" size={18} />
@@ -264,13 +265,13 @@ export default function EscalationManagement() {
                 <input 
                   type="text" 
                   placeholder="Filter History..." 
-                  className="bg-zinc-100 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-lg pl-9 pr-4 py-1.5 text-xs text-zinc-800 dark:text-white placeholder:text-zinc-400 dark:placeholder:text-zinc-700 outline-none focus:border-indigo-500/30 transition-all"
+                  className="bg-zinc-100 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-lg pl-9 pr-4 py-1.5 text-xs text-zinc-800 dark:text-white placeholder:text-zinc-400 dark:placeholder:text-zinc-700 outline-none focus:border-indigo-500/30"
                 />
               </div>
             </div>
           </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-left">
+          <div className="overflow-x-auto -mx-4 sm:mx-0">
+            <table className="w-full text-left min-w-[720px]">
               <thead>
                 <tr className="border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/30 dark:bg-zinc-950/20">
                   <th className="px-6 py-4 text-[10px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest">Last Update</th>
@@ -359,74 +360,81 @@ export default function EscalationManagement() {
       )
 }
 
-      {/* Response Modal */}
+    {showResponseModal && createPortal(
       <AnimatePresence>
-        {showResponseModal && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-black/80 backdrop-blur-sm">
-            <motion.div
-              initial={{ opacity: 0, scale: 0.9, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.9, y: 20 }}
-              className="glass w-full max-w-lg rounded-3xl overflow-hidden"
-            >
-              <div className="p-8 border-b border-zinc-800 flex items-center justify-between bg-zinc-950/50">
-                <div className="flex items-center gap-3">
-                  <div className={`p-2 rounded-xl border ${
-                    modalAction === 'approved' ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-500' : 'bg-rose-500/10 border-rose-500/20 text-rose-500'
-                  }`}>
-                    {modalAction === 'approved' ? <CheckCircle2 size={24} /> : <AlertTriangle size={24} />}
-                  </div>
-                  <div>
-                    <h3 className="text-xl font-bold text-white uppercase tracking-tight">{modalAction} Escalation</h3>
-                    <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mt-1">Audit Log Recording...</p>
-                  </div>
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          onClick={() => setShowResponseModal(false)}
+          className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6 bg-black/70 backdrop-blur-md overflow-y-auto"
+        >
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9, y: 20 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.9, y: 20 }}
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-lg rounded-3xl overflow-hidden bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 shadow-2xl my-auto"
+          >
+            <div className="p-5 sm:p-6 lg:p-8 border-b border-zinc-100 dark:border-zinc-800 flex items-center justify-between bg-zinc-50 dark:bg-zinc-950/50">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className={`shrink-0 p-2 rounded-xl border ${
+                  modalAction === 'approved' ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-600 dark:text-emerald-500' : 'bg-rose-500/10 border-rose-500/20 text-rose-600 dark:text-rose-500'
+                }`}>
+                  {modalAction === 'approved' ? <CheckCircle2 size={22} /> : <AlertTriangle size={22} />}
                 </div>
-                <button onClick={() => setShowResponseModal(false)} className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-500 transition-colors">
-                  <XCircle size={20} />
+                <div className="min-w-0">
+                  <h3 className="text-base sm:text-lg lg:text-xl font-bold text-zinc-900 dark:text-white uppercase tracking-tight truncate">{modalAction} Escalation</h3>
+                  <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mt-1 truncate">Audit Log Recording...</p>
+                </div>
+              </div>
+              <button onClick={() => setShowResponseModal(false)} className="shrink-0 p-2 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-lg text-zinc-500 transition-colors">
+                <XCircle size={20} />
+              </button>
+            </div>
+
+            <div className="p-5 sm:p-6 lg:p-8 space-y-6">
+              <div className="space-y-3">
+                <label className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em] block">
+                  Response Feedback {modalAction === 'rejected' && <span className="text-rose-500">(Required)</span>}
+                </label>
+                <textarea
+                  className="input-field min-h-[120px] text-sm resize-none"
+                  placeholder={`Provide context for your ${modalAction} decision...`}
+                  value={responseComment}
+                  onChange={(e) => setResponseComment(e.target.value)}
+                />
+                <div className="p-4 bg-zinc-50 dark:bg-zinc-950 rounded-2xl border border-zinc-200 dark:border-zinc-800 flex items-start gap-3">
+                  <History size={16} className="text-indigo-600 dark:text-indigo-400 mt-0.5 shrink-0" />
+                  <p className="text-[10px] text-zinc-500 dark:text-zinc-500 leading-relaxed font-medium">
+                    <span className="text-zinc-700 dark:text-zinc-200 uppercase font-black mr-1 tracking-widest">Notice:</span>
+                    This response will be logged in the permanent audit trail and visible to the Agent, Team Leader, and Administration.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 pt-2 sm:pt-4">
+                <button
+                  onClick={() => setShowResponseModal(false)}
+                  className="flex-1 px-6 sm:px-8 py-3 rounded-2xl bg-zinc-100 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 text-zinc-600 dark:text-zinc-400 font-black text-[10px] uppercase tracking-[0.2em] hover:bg-zinc-200 dark:hover:bg-zinc-900 hover:text-zinc-900 dark:hover:text-white transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleRespond}
+                  className={`flex-1 px-6 sm:px-8 py-3 rounded-2xl font-black text-[10px] uppercase tracking-[0.2em] text-white shadow-lg transition-all ${
+                    modalAction === 'approved' ? 'bg-emerald-600 shadow-emerald-500/20 hover:bg-emerald-500' : 'bg-rose-600 shadow-rose-500/20 hover:bg-rose-500'
+                  }`}
+                >
+                  Submit Decision
                 </button>
               </div>
-
-              <div className="p-8 space-y-6">
-                <div className="space-y-3">
-                  <label className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em] block">
-                    Response Feedback {modalAction === 'rejected' && <span className="text-rose-500">(Required)</span>}
-                  </label>
-                  <textarea 
-                    className="input-field min-h-[120px] text-sm resize-none"
-                    placeholder={`Provide context for your ${modalAction} decision...`}
-                    value={responseComment}
-                    onChange={(e) => setResponseComment(e.target.value)}
-                  />
-                  <div className="p-4 bg-zinc-950 rounded-2xl border border-zinc-800 flex items-start gap-3">
-                    <History size={16} className="text-indigo-400 mt-0.5" />
-                    <p className="text-[10px] text-zinc-500 leading-relaxed font-medium">
-                      <span className="text-zinc-200 uppercase font-black mr-1 tracking-widest">Notice:</span>
-                      This response will be logged in the permanent audit trail and visible to the Agent, Team Leader, and Administration.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex gap-4 pt-4">
-                  <button 
-                    onClick={() => setShowResponseModal(false)}
-                    className="flex-1 px-8 py-3 rounded-2xl bg-zinc-950 border border-zinc-800 text-zinc-400 font-black text-[10px] uppercase tracking-[0.2em] hover:text-white transition-all"
-                  >
-                    Cancel
-                  </button>
-                  <button 
-                    onClick={handleRespond}
-                    className={`flex-1 px-8 py-3 rounded-2xl font-black text-[10px] uppercase tracking-[0.2em] text-white shadow-lg transition-all ${
-                      modalAction === 'approved' ? 'bg-emerald-600 shadow-emerald-500/20 hover:bg-emerald-500' : 'bg-rose-600 shadow-rose-500/20 hover:bg-rose-500'
-                    }`}
-                  >
-                    Submit Decision
-                  </button>
-                </div>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
+            </div>
+          </motion.div>
+        </motion.div>
+      </AnimatePresence>,
+      document.body
+    )}
     </div>
   );
 }

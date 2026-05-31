@@ -14,7 +14,7 @@ export default function StatCard({ title, value, icon: Icon, trend, color }: Sta
   return (
     <motion.div 
       whileHover={{ y: -2 }}
-      className="bg-card dark:bg-zinc-900/40 border border-card-border dark:border-zinc-800 p-6 rounded-2xl shadow-sm dark:shadow-none transition-all duration-300"
+      className="bg-card dark:bg-zinc-900/40 border border-card-border dark:border-zinc-800 p-6 rounded-2xl shadow-sm dark:shadow-none"
     >
       <div className="text-zinc-600 dark:text-zinc-500 text-[10px] font-black uppercase tracking-widest mb-2 flex items-center gap-2">
         <Icon size={12} className={

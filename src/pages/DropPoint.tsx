@@ -76,11 +76,11 @@ export default function DropPoint() {
     });
 
   return (
-    <div className="p-8 space-y-8 max-w-[1600px] mx-auto">
+    <div className="p-4 sm:p-6 lg:p-8 space-y-6 sm:space-y-8 max-w-[1600px] mx-auto">
       {/* Header section */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
         <div>
-          <h1 className="text-3xl font-black text-zinc-900 dark:text-white tracking-tighter flex items-center gap-3">
+          <h1 className="text-2xl sm:text-3xl font-black text-zinc-900 dark:text-white tracking-tighter flex items-center gap-3">
             <BarChart3 className="text-indigo-600" size={32} />
             Drop Point
           </h1>
@@ -96,7 +96,7 @@ export default function DropPoint() {
             <input 
               type="text" 
               placeholder="Search employee..."
-              className="w-full bg-white dark:bg-zinc-900 border border-zinc-100 dark:border-zinc-800 rounded-2xl pl-12 pr-6 py-3 text-sm outline-none focus:border-indigo-500 transition-all shadow-sm"
+              className="w-full bg-white dark:bg-zinc-900 border border-zinc-100 dark:border-zinc-800 rounded-2xl pl-12 pr-6 py-3 text-sm outline-none focus:border-indigo-500 shadow-sm"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
             />
@@ -112,7 +112,7 @@ export default function DropPoint() {
       </div>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 sm:gap-6">
         <div className="bg-white dark:bg-zinc-900/50 border border-zinc-100 dark:border-zinc-800 p-6 rounded-[2rem] shadow-sm">
           <div className="flex items-center gap-3 mb-4">
             <div className="p-2 bg-indigo-500/10 rounded-lg text-indigo-600">
@@ -120,7 +120,7 @@ export default function DropPoint() {
             </div>
             <span className="text-[10px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest">Total Evaluated Calls</span>
           </div>
-          <p className="text-4xl font-black text-zinc-900 dark:text-white tracking-tighter">
+          <p className="text-2xl sm:text-3xl md:text-4xl font-black text-zinc-900 dark:text-white tracking-tighter">
             {reports.reduce((acc, curr) => acc + curr.total_calls, 0)}
           </p>
         </div>
@@ -132,7 +132,7 @@ export default function DropPoint() {
             </div>
             <span className="text-[10px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest">Team Average Score</span>
           </div>
-          <p className="text-4xl font-black text-zinc-900 dark:text-white tracking-tighter">
+          <p className="text-2xl sm:text-3xl md:text-4xl font-black text-zinc-900 dark:text-white tracking-tighter">
             {reports.length > 0 
               ? (reports.reduce((acc, curr) => acc + parseFloat(curr.avg_score), 0) / reports.length).toFixed(1)
               : '0.0'}%
@@ -146,16 +146,16 @@ export default function DropPoint() {
             </div>
             <span className="text-[10px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest">Total Identified Issues</span>
           </div>
-          <p className="text-4xl font-black text-zinc-900 dark:text-white tracking-tighter">
+          <p className="text-2xl sm:text-3xl md:text-4xl font-black text-zinc-900 dark:text-white tracking-tighter">
             {reports.reduce((acc, curr) => acc + curr.error_list.reduce((eAcc, eCurr) => eAcc + eCurr.count, 0), 0)}
           </p>
         </div>
       </div>
 
       {/* Main Table */}
-      <div className="bg-white dark:bg-zinc-900/40 border border-zinc-100 dark:border-zinc-800 rounded-[2rem] overflow-hidden shadow-sm transition-colors duration-300">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left">
+      <div className="bg-white dark:bg-zinc-900/40 border border-zinc-100 dark:border-zinc-800 rounded-[2rem] overflow-hidden shadow-sm">
+        <div className="overflow-x-auto -mx-4 sm:mx-0">
+          <table className="w-full text-left min-w-[720px]">
             <thead>
               <tr className="border-b border-zinc-100 dark:border-zinc-800/50 bg-white dark:bg-zinc-950/20">
                 <th className="px-8 py-5">
@@ -212,7 +212,7 @@ export default function DropPoint() {
                 ))
               ) : filteredReports.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-8 py-20 text-center">
+                  <td colSpan={5} className="px-8 py-12 sm:py-20 text-center">
                     <div className="flex flex-col items-center gap-4">
                       <div className="p-4 bg-zinc-50 dark:bg-zinc-950 rounded-full">
                         <User className="text-zinc-300" size={32} />
@@ -230,7 +230,7 @@ export default function DropPoint() {
                     <tr className={`group hover:bg-zinc-50 dark:hover:bg-zinc-950/40 transition-all cursor-pointer ${isExpanded ? 'bg-zinc-50/50 dark:bg-zinc-950/20' : ''}`} onClick={() => setExpandedRow(isExpanded ? null : report.agent_id)}>
                       <td className="px-8 py-6">
                         <div className="flex items-center gap-4">
-                          <div className="w-10 h-10 rounded-xl bg-white dark:bg-zinc-950 border border-zinc-100 dark:border-zinc-800 flex items-center justify-center text-zinc-400 group-hover:border-indigo-500/30 transition-all shadow-sm">
+                          <div className="w-10 h-10 rounded-xl bg-white dark:bg-zinc-950 border border-zinc-100 dark:border-zinc-800 flex items-center justify-center text-zinc-400 group-hover:border-indigo-500/30 shadow-sm">
                             <User size={18} />
                           </div>
                           <div>
@@ -292,7 +292,7 @@ export default function DropPoint() {
                               {report.error_list.length > 0 ? (
                                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                                   {report.error_list.map((error, idx) => (
-                                    <div key={idx} className="bg-white dark:bg-zinc-900 border border-zinc-100 dark:border-zinc-800/50 p-4 rounded-2xl shadow-sm hover:border-rose-500/20 transition-all group">
+                                    <div key={idx} className="bg-white dark:bg-zinc-900 border border-zinc-100 dark:border-zinc-800/50 p-4 rounded-2xl shadow-sm hover:border-rose-500/20 group">
                                       <div className="flex justify-between items-start gap-4">
                                         <p className="text-xs font-bold text-zinc-800 dark:text-zinc-300 leading-relaxed">{error.label}</p>
                                         <span className="px-2 py-1 bg-rose-500/10 text-rose-600 text-[10px] font-black rounded-lg min-w-[24px] text-center">

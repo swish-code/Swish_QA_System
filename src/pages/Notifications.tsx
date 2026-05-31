@@ -84,11 +84,11 @@ export default function Notifications() {
   const unreadCount = notifications.filter(n => !n.is_read).length;
 
   return (
-    <div className="p-8 max-w-[1200px] mx-auto space-y-8">
+    <div className="p-4 sm:p-6 lg:p-8 max-w-[1200px] mx-auto space-y-6 sm:space-y-8">
       {/* Header Area */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
         <div className="flex flex-col gap-2">
-          <h1 className="text-4xl font-black text-zinc-900 dark:text-white tracking-tighter flex items-center gap-4 italic uppercase">
+          <h1 className="text-2xl sm:text-3xl md:text-4xl font-black text-zinc-900 dark:text-white tracking-tighter flex items-center gap-4 italic uppercase">
             <div className="w-1.5 h-10 bg-indigo-600 rounded-full" />
             Notification Hub
           </h1>
@@ -98,10 +98,10 @@ export default function Notifications() {
         </div>
 
         <div className="flex items-center gap-3">
-          <button 
+          <button
             onClick={markAllAsRead}
             disabled={unreadCount === 0}
-            className="flex items-center gap-2 px-6 py-3 bg-zinc-900 dark:bg-zinc-800 text-zinc-400 hover:text-white rounded-2xl border border-zinc-800 transition-all font-black text-[10px] uppercase tracking-widest disabled:opacity-50 disabled:cursor-not-allowed italic"
+            className="flex items-center gap-2 px-6 py-3 bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-400 hover:bg-indigo-600 hover:text-white hover:border-indigo-500 rounded-2xl border border-zinc-200 dark:border-zinc-800 transition-all font-black text-[10px] uppercase tracking-widest disabled:opacity-50 disabled:cursor-not-allowed italic"
           >
             <CheckCircle2 size={14} />
             Mark all as read
@@ -109,7 +109,7 @@ export default function Notifications() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 sm:gap-6 lg:gap-8">
         {/* Sidebar Filters */}
         <div className="lg:col-span-1 space-y-6">
           <div className="glass-card !p-6 space-y-6">
@@ -169,7 +169,7 @@ export default function Notifications() {
                   onClick={() => handleNotificationClick(n)}
                   className={`group relative overflow-hidden glass-card !p-6 flex gap-6 cursor-pointer hover:border-indigo-500/30 transition-all hover:bg-white dark:hover:bg-zinc-900/40 ${!n.is_read ? 'bg-indigo-600/[0.03] border-l-4 border-l-indigo-600' : ''}`}
                 >
-                  <div className={`shrink-0 w-12 h-12 rounded-2xl flex items-center justify-center border transition-all group-hover:scale-110 ${
+                  <div className={`shrink-0 w-12 h-12 rounded-2xl flex items-center justify-center border group-hover:scale-110 ${
                     n.title.toLowerCase().includes('approved') ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-500' : 
                     n.title.toLowerCase().includes('escalated') ? 'bg-amber-500/10 border-amber-500/20 text-amber-500' :
                     'bg-indigo-500/10 border-indigo-500/20 text-indigo-600'
@@ -210,7 +210,7 @@ export default function Notifications() {
               ))}
             </div>
           ) : (
-            <div className="glass-card !p-20 flex flex-col items-center justify-center text-center space-y-6">
+            <div className="glass-card !p-12 sm:!p-20 flex flex-col items-center justify-center text-center space-y-6">
               <div className="w-20 h-20 bg-zinc-50 dark:bg-zinc-900 rounded-full flex items-center justify-center text-zinc-300 dark:text-zinc-700">
                 <Inbox size={40} />
               </div>

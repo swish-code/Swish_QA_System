@@ -251,13 +251,13 @@ export default function Analysis() {
   };
 
   return (
-    <div className="space-y-8 pb-16">
+    <div className="space-y-6 sm:space-y-8 pb-16">
       {/* Top Header Card */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
         <div className="space-y-2">
           <div className="flex items-center gap-3">
             <div className="w-1.5 h-6 bg-indigo-600 rounded-full" />
-            <h2 className="text-4xl font-black text-zinc-900 dark:text-white tracking-tighter uppercase italic">
+            <h2 className="text-2xl sm:text-3xl md:text-4xl font-black text-zinc-900 dark:text-white tracking-tighter uppercase italic">
               Performance Analysis Engine
             </h2>
           </div>
@@ -395,14 +395,14 @@ export default function Analysis() {
       ) : (
         <div className="space-y-8 animate-fade-in">
           {/* Bento summary KPIs framework */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 sm:gap-6">
             {/* Total Evaluations */}
             <div className="bg-white dark:bg-zinc-950 border border-zinc-100 dark:border-zinc-850 p-6 rounded-3xl shadow-sm relative overflow-hidden group">
               <div className="absolute top-0 right-0 w-24 h-24 bg-indigo-50 dark:bg-indigo-950/10 rounded-full translate-x-1/3 -translate-y-1/3 group-hover:scale-125 transition-transform" />
               <Layers size={18} className="text-indigo-600 dark:text-indigo-400 relative z-10" />
               <div className="mt-4 relative z-10">
                 <span className="text-[10px] text-zinc-400 font-extrabold uppercase tracking-widest block">Core Audit Volume</span>
-                <span className="text-3xl font-black text-zinc-900 dark:text-white mt-1 tracking-tight italic block">
+                <span className="text-2xl sm:text-3xl font-black text-zinc-900 dark:text-white mt-1 tracking-tight italic block">
                   {summary.totalEvaluations}
                 </span>
                 <span className="text-[8.5px] text-zinc-400 block mt-2 uppercase font-bold">Documented Evaluations</span>
@@ -415,7 +415,7 @@ export default function Analysis() {
               <Award size={18} className="text-emerald-500 dark:text-emerald-400 relative z-10" />
               <div className="mt-4 relative z-10">
                 <span className="text-[10px] text-zinc-400 font-extrabold uppercase tracking-widest block">Average Score KPI</span>
-                <span className="text-3xl font-black text-emerald-500 dark:text-emerald-400 mt-1 tracking-tight italic block">
+                <span className="text-2xl sm:text-3xl font-black text-emerald-500 dark:text-emerald-400 mt-1 tracking-tight italic block">
                   {summary.averageScore}%
                 </span>
                 <span className="text-[8.5px] text-zinc-400 block mt-2 uppercase font-bold">Benchmark target: 85%</span>
@@ -428,7 +428,7 @@ export default function Analysis() {
               <CheckCircle2 size={18} className="text-teal-600 dark:text-teal-400 relative z-10" />
               <div className="mt-4 relative z-10">
                 <span className="text-[10px] text-zinc-400 font-extrabold uppercase tracking-widest block">Conformance Rate</span>
-                <span className="text-3xl font-black text-teal-600 dark:text-teal-400 mt-1 tracking-tight italic block">
+                <span className="text-2xl sm:text-3xl font-black text-teal-600 dark:text-teal-400 mt-1 tracking-tight italic block">
                   {summary.satisfactoryRate}%
                 </span>
                 <span className="text-[8.5px] text-zinc-400 block mt-2 uppercase font-bold">Evaluations &ge; 85% Score</span>
@@ -441,7 +441,7 @@ export default function Analysis() {
               <AlertTriangle size={18} className="text-rose-600 dark:text-rose-400 relative z-10" />
               <div className="mt-4 relative z-10">
                 <span className="text-[10px] text-zinc-400 font-extrabold uppercase tracking-widest block">Critical Defect Rate</span>
-                <span className="text-3xl font-black text-rose-600 dark:text-rose-400 mt-1 tracking-tight italic block">
+                <span className="text-2xl sm:text-3xl font-black text-rose-600 dark:text-rose-400 mt-1 tracking-tight italic block">
                   {summary.criticalFailRate}%
                 </span>
                 <span className="text-[8.5px] text-zinc-400 block mt-2 uppercase font-bold">{summary.criticalFailCount} absolute infractions</span>
@@ -454,7 +454,7 @@ export default function Analysis() {
               <SlidersHorizontal size={18} className="text-amber-500 relative z-10" />
               <div className="mt-4 relative z-10">
                 <span className="text-[10px] text-zinc-400 font-extrabold uppercase tracking-widest block">Clean Skill Performance</span>
-                <span className="text-3xl font-black text-zinc-800 dark:text-zinc-200 mt-1 tracking-tight italic block">
+                <span className="text-2xl sm:text-3xl font-black text-zinc-800 dark:text-zinc-200 mt-1 tracking-tight italic block">
                   {summary.averageScoreExcludingCritical}%
                 </span>
                 <span className="text-[8.5px] text-zinc-400 block mt-2 uppercase font-bold">Excludes auto-fails</span>
@@ -463,7 +463,7 @@ export default function Analysis() {
           </div>
 
           {/* Row 1 Charts Frame : General Performance Trend line */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 lg:gap-8">
             {/* Trend Line (Take 2 columns) */}
             <div className="bg-white dark:bg-zinc-950 border border-zinc-100 dark:border-zinc-850 p-6 rounded-3xl shadow-md lg:col-span-2 space-y-4">
               <div className="flex items-center justify-between">
@@ -585,7 +585,7 @@ export default function Analysis() {
           </div>
 
           {/* Row 2 Bento: Side-by-side Segment comparison charts */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6 lg:gap-8">
             {/* LOB / Brand comparison */}
             <div className="bg-white dark:bg-zinc-950 border border-zinc-100 dark:border-zinc-850 p-6 rounded-3xl shadow-md space-y-4">
               <div>
@@ -738,7 +738,7 @@ export default function Analysis() {
           </div>
 
           {/* Row 4 Bento: Agents leaderboard & Evaluators calibrator */}
-          <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 sm:gap-6 lg:gap-8">
             {/* Agent compliance leaderboard */}
             <div className="bg-white dark:bg-zinc-950 border border-zinc-100 dark:border-zinc-850 rounded-3xl shadow-md xl:col-span-2 overflow-hidden flex flex-col justify-between">
               <div>
@@ -763,8 +763,8 @@ export default function Analysis() {
                   </div>
                 </div>
 
-                <div className="overflow-x-auto max-h-96">
-                  <table className="w-full text-left">
+                <div className="overflow-x-auto max-h-96 -mx-4 sm:mx-0">
+                  <table className="w-full text-left min-w-[640px]">
                     <thead>
                       <tr className="bg-slate-50/50 dark:bg-zinc-950/20 text-zinc-400 dark:text-zinc-650 text-[9px] uppercase font-black tracking-widest italic border-b border-zinc-100 dark:border-zinc-850">
                         <th className="px-6 py-4">Agent Name</th>

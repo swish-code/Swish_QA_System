@@ -57,14 +57,14 @@ export default function LOBDashboard() {
   return (
     <div className="space-y-10 pb-20">
       {/* Header & Filters */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 bg-card p-8 rounded-[2.5rem] border border-card-border shadow-sm transition-colors duration-300">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 bg-card p-4 sm:p-6 lg:p-8 rounded-[2.5rem] border border-card-border shadow-sm">
         <div>
-          <h1 className="text-3xl font-black text-zinc-900 dark:text-white tracking-tighter uppercase mb-2">LOB Performance Hub</h1>
+          <h1 className="text-2xl sm:text-3xl font-black text-zinc-900 dark:text-white tracking-tighter uppercase mb-2">LOB Performance Hub</h1>
           <p className="text-zinc-500 text-xs font-bold uppercase tracking-widest">Line of Business Analytics & Quality Insights</p>
         </div>
 
         <div className="flex flex-wrap items-center gap-4">
-          <div className="flex items-center gap-2 bg-white dark:bg-zinc-900/50 border border-zinc-100 dark:border-zinc-800 rounded-xl px-4 py-2 transition-colors duration-300">
+          <div className="flex items-center gap-2 bg-white dark:bg-zinc-900/50 border border-zinc-100 dark:border-zinc-800 rounded-xl px-4 py-2">
             <Filter size={14} className="text-zinc-400 dark:text-zinc-500" />
             <select 
               value={department}
@@ -80,7 +80,7 @@ export default function LOBDashboard() {
             </select>
           </div>
 
-          <div className="flex items-center gap-2 bg-white dark:bg-zinc-900/50 border border-zinc-100 dark:border-zinc-800 rounded-xl px-4 py-2 transition-colors duration-300">
+          <div className="flex items-center gap-2 bg-white dark:bg-zinc-900/50 border border-zinc-100 dark:border-zinc-800 rounded-xl px-4 py-2">
             <Calendar size={14} className="text-zinc-400 dark:text-zinc-500" />
             <input 
               type="date" 
@@ -100,13 +100,13 @@ export default function LOBDashboard() {
       </div>
 
       {/* Summary Chips */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 sm:gap-6">
         <StatCard title="Overall LOB Quality" value={`${Math.round(data?.summary?.avgScore || 0)}%`} icon={Target} color="purple" trend="+1.2%" />
         <StatCard title="Total LOB Audits" value={data?.summary?.totalAudits || '0'} icon={FileCheck} color="blue" trend="+5%" />
         <StatCard title="Active LOB Agents" value={data?.summary?.activeAgents || '0'} icon={Zap} color="orange" />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6 lg:gap-8">
         {/* Top Performers */}
         <div className="glass-card relative overflow-hidden group">
           <div className="absolute top-0 right-0 p-8 opacity-[0.03] dark:opacity-5 group-hover:opacity-10 transition-opacity">
@@ -168,7 +168,7 @@ export default function LOBDashboard() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6 lg:gap-8">
         {/* Pain Points (Most Deduced Attributes) */}
         <div className="glass-card">
           <div className="flex items-center gap-3 mb-10 pb-6 border-b border-zinc-100 dark:border-zinc-800/50">
@@ -207,7 +207,7 @@ export default function LOBDashboard() {
           </div>
           <div className="space-y-4">
             {data?.wowCalls?.map((call: any) => (
-              <div key={call.id} className="p-4 bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-2xl flex items-center justify-between group hover:border-amber-500/30 transition-all shadow-sm">
+              <div key={call.id} className="p-4 bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-2xl flex items-center justify-between group hover:border-amber-500/30 shadow-sm">
                 <div className="flex items-center gap-4">
                   <div className="w-8 h-8 rounded-full bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-600 dark:text-amber-500">
                     <Zap size={14} />

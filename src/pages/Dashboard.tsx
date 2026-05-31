@@ -86,15 +86,15 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6 sm:space-y-8">
       {/* Header */}
-      <div className="flex justify-between items-end border-b border-zinc-200 dark:border-zinc-800 pb-8 transition-colors duration-300">
+      <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4 border-b border-zinc-200 dark:border-zinc-800 pb-8">
         <div>
-          <h2 className="text-3xl font-light text-zinc-900 dark:text-white tracking-tight mb-1">Welcome back, {user?.display_name} 👋</h2>
+          <h2 className="text-2xl sm:text-3xl font-light text-zinc-900 dark:text-white tracking-tight mb-1">Welcome back, {user?.display_name} 👋</h2>
           <p className="text-zinc-500 text-sm">Here's your quality performance overview for today.</p>
         </div>
         <div className="flex gap-4">
-          <div className="px-4 py-2 bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl flex items-center gap-2 transition-colors duration-300">
+          <div className="px-4 py-2 bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl flex items-center gap-2">
             <Clock size={16} className="text-indigo-600 dark:text-indigo-400" />
             <span className="text-xs font-bold text-zinc-500 dark:text-zinc-400">{new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
           </div>
@@ -102,14 +102,14 @@ export default function Dashboard() {
       </div>
 
       {/* Stats Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
         <StatCard title="Avg Quality Score" value={`${stats?.avgScore || '0'}%`} icon={TrendingUp} trend="+2.5%" color="purple" />
         <StatCard title="Total Audits" value={stats?.totalAudits?.toLocaleString() || '0'} icon={FileCheck} trend="↑ 12" color="blue" />
         <StatCard title="Critical Failures" value={stats?.criticalFailures?.toString() || '0'} icon={AlertCircle} trend="↓ 1" color="red" />
         <StatCard title="Active Agents" value={stats?.activeAgents?.toString() || '0'} icon={Users} color="orange" />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 lg:gap-8">
         {/* Main Chart */}
         <div className="lg:col-span-2 glass-card">
           <div className="flex justify-between items-center mb-10">
@@ -179,7 +179,7 @@ export default function Dashboard() {
             ) : (
               stats?.topPerformers?.map((item: any, index: number) => (
                 <div key={item.id} className="flex items-center gap-4 group">
-                  <div className="w-8 h-8 rounded-lg bg-white dark:bg-zinc-950 border border-zinc-100 dark:border-zinc-800 flex items-center justify-center text-xs font-mono text-zinc-500 group-hover:border-indigo-500/30 transition-all">
+                  <div className="w-8 h-8 rounded-lg bg-white dark:bg-zinc-950 border border-zinc-100 dark:border-zinc-800 flex items-center justify-center text-xs font-mono text-zinc-500 group-hover:border-indigo-500/30">
                     0{index + 1}
                   </div>
                   <div className="flex-1">
@@ -219,8 +219,8 @@ export default function Dashboard() {
 
 
       {user?.role === 'agent' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-          <div className="glass-card p-8">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6 lg:gap-8">
+          <div className="glass-card p-4 sm:p-6 lg:p-8">
             <div className="flex items-center gap-2 mb-6">
               <Target className="text-orange-500" size={24} />
               <h3 className="text-xl font-bold text-zinc-900 dark:text-white">Current Badges</h3>

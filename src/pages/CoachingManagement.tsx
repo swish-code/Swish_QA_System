@@ -73,10 +73,10 @@ export default function CoachingManagement() {
   const completedSessions = sessions.filter(s => s.status === 'completed');
 
   return (
-    <div className="space-y-8 max-w-[1400px] mx-auto" dir="ltr">
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-end border-b border-zinc-200 dark:border-zinc-800 pb-8 gap-6 transition-colors duration-300">
+    <div className="space-y-6 sm:space-y-8 max-w-[1400px] mx-auto" dir="ltr">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-end border-b border-zinc-200 dark:border-zinc-800 pb-8 gap-6">
         <div>
-          <h2 className="text-3xl font-black text-zinc-900 dark:text-white tracking-tighter uppercase italic mb-2">Coaching Hub</h2>
+          <h2 className="text-2xl sm:text-3xl font-black text-zinc-900 dark:text-white tracking-tighter uppercase italic mb-2">Coaching Hub</h2>
           <p className="text-zinc-500 text-xs font-medium max-w-md">Develop agent skills and track performance improvement plans in real-time.</p>
         </div>
         {user?.role === 'tl' && (
@@ -89,7 +89,7 @@ export default function CoachingManagement() {
         )}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 lg:gap-8">
         <div className="lg:col-span-2 space-y-6">
            <div className="flex items-center gap-4 mb-2">
              <div className="w-2 h-8 bg-indigo-500 rounded-full" />
@@ -101,7 +101,7 @@ export default function CoachingManagement() {
                <div className="inline-block w-8 h-8 border-2 border-indigo-500/20 border-t-indigo-500 rounded-full animate-spin" />
              </div>
            ) : sessions.length === 0 ? (
-             <div className="glass-card p-20 text-center border-dashed border-zinc-100 dark:border-zinc-800 bg-white dark:bg-zinc-950/20 transition-colors duration-300">
+             <div className="glass-card p-12 sm:p-20 text-center border-dashed border-zinc-100 dark:border-zinc-800 bg-white dark:bg-zinc-950/20">
                <MessageSquare className="mx-auto text-zinc-300 dark:text-zinc-800 mb-4" size={40} />
                <p className="text-zinc-400 dark:text-zinc-600 text-xs font-black uppercase tracking-widest italic">No coaching matches recorded yet</p>
              </div>
@@ -112,9 +112,9 @@ export default function CoachingManagement() {
                    key={session.id} 
                    initial={{ opacity: 0, x: -20 }}
                    animate={{ opacity: 1, x: 0 }}
-                   className="glass-card flex items-center gap-6 border-zinc-200 dark:border-zinc-800/50 bg-white dark:bg-zinc-900/40 group hover:border-indigo-600/30 transition-all cursor-pointer shadow-sm"
+                   className="glass-card flex items-center gap-6 border-zinc-200 dark:border-zinc-800/50 bg-white dark:bg-zinc-900/40 group hover:border-indigo-600/30 cursor-pointer shadow-sm"
                  >
-                    <div className="w-14 h-14 rounded-2xl bg-white dark:bg-zinc-950 border border-zinc-100 dark:border-zinc-800 flex flex-col items-center justify-center group-hover:border-indigo-600/20 transition-all p-2">
+                    <div className="w-14 h-14 rounded-2xl bg-white dark:bg-zinc-950 border border-zinc-100 dark:border-zinc-800 flex flex-col items-center justify-center group-hover:border-indigo-600/20 p-2">
                        <Calendar size={18} className="text-zinc-400 dark:text-zinc-600 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors" />
                        <span className="text-[8px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest mt-1 text-center">
                          {new Date(session.created_at).toLocaleDateString([], { month: 'short', day: 'numeric' })}
@@ -155,7 +155,7 @@ export default function CoachingManagement() {
         </div>
 
         <div className="space-y-6">
-           <div className="glass-card border-zinc-200 dark:border-zinc-800/50 p-8 bg-white dark:bg-zinc-900/40 transition-colors duration-300 shadow-sm">
+           <div className="glass-card border-zinc-200 dark:border-zinc-800/50 p-4 sm:p-6 lg:p-8 bg-white dark:bg-zinc-900/40 shadow-sm">
               <h3 className="text-[10px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-[0.2em] mb-6 flex items-center gap-2">
                  <Clock className="text-indigo-600 dark:text-indigo-400" size={14} />
                  Statistics
@@ -172,7 +172,7 @@ export default function CoachingManagement() {
               </div>
            </div>
            
-           <div className="glass-card border-zinc-200 dark:border-zinc-800/50 p-8 overflow-hidden relative bg-white dark:bg-zinc-900/40 transition-colors duration-300 shadow-sm">
+           <div className="glass-card border-zinc-200 dark:border-zinc-800/50 p-8 overflow-hidden relative bg-white dark:bg-zinc-900/40 shadow-sm">
               <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/5 blur-3xl rounded-full" />
               <h3 className="text-[10px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-[0.2em] mb-6 flex items-center gap-2">
                  <CheckCircle className="text-emerald-600 dark:text-emerald-500" size={14} />
@@ -201,17 +201,15 @@ export default function CoachingManagement() {
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 w-full max-w-2xl rounded-[3rem] overflow-hidden shadow-2xl relative transition-colors duration-300"
+              className="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 w-full max-w-2xl rounded-[3rem] overflow-hidden shadow-2xl relative"
             >
-              <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-600/5 blur-[100px] -z-10" />
-              
               <div className="p-10 border-b border-zinc-100 dark:border-zinc-800/50 flex items-center justify-between bg-white dark:bg-zinc-950/20">
                 <div className="flex items-center gap-4">
                   <div className="w-14 h-14 bg-indigo-600/10 border border-indigo-500/20 rounded-[1.5rem] flex items-center justify-center text-indigo-600 dark:text-indigo-400">
                     <MessageSquare size={28} />
                   </div>
                   <div>
-                    <h3 className="text-2xl font-black text-zinc-900 dark:text-white tracking-tighter uppercase italic">New Session</h3>
+                    <h3 className="text-xl sm:text-2xl font-black text-zinc-900 dark:text-white tracking-tighter uppercase italic">New Session</h3>
                     <p className="text-[10px] font-black text-indigo-600 dark:text-indigo-500 uppercase tracking-widest mt-1">Improvement Protocol</p>
                   </div>
                 </div>
@@ -224,7 +222,7 @@ export default function CoachingManagement() {
                 <div className="space-y-4">
                   <label className="text-[10px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest ml-2">Target Agent</label>
                   <select 
-                    className="w-full bg-white dark:bg-zinc-900 border border-zinc-100 dark:border-zinc-800 rounded-2xl px-6 py-4 text-sm text-zinc-800 dark:text-white outline-none focus:border-indigo-500 transition-all appearance-none cursor-pointer shadow-sm" 
+                    className="w-full bg-white dark:bg-zinc-900 border border-zinc-100 dark:border-zinc-800 rounded-2xl px-6 py-4 text-sm text-zinc-800 dark:text-white outline-none focus:border-indigo-500 appearance-none cursor-pointer shadow-sm"
                     value={newSession.agent_id}
                     onChange={(e) => setNewSession({...newSession, agent_id: e.target.value})}
                     required
@@ -234,11 +232,11 @@ export default function CoachingManagement() {
                   </select>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6 lg:gap-8">
                   <div className="space-y-4">
                     <label className="text-[10px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest ml-2">Weaknesses Identified</label>
                     <textarea 
-                      className="w-full bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-3xl px-6 py-4 text-sm text-zinc-800 dark:text-white outline-none focus:border-indigo-500 transition-all resize-none shadow-sm placeholder:text-zinc-400" 
+                      className="w-full bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-3xl px-6 py-4 text-sm text-zinc-800 dark:text-white outline-none focus:border-indigo-500 resize-none shadow-sm placeholder:text-zinc-400"
                       rows={4}
                       placeholder="Identify keys gap in performance..."
                       value={newSession.weaknesses}
@@ -249,7 +247,7 @@ export default function CoachingManagement() {
                   <div className="space-y-4">
                     <label className="text-[10px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest ml-2">Success Action Plan</label>
                     <textarea 
-                      className="w-full bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-3xl px-6 py-4 text-sm text-zinc-800 dark:text-white outline-none focus:border-indigo-500 transition-all resize-none shadow-sm placeholder:text-zinc-400" 
+                      className="w-full bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-3xl px-6 py-4 text-sm text-zinc-800 dark:text-white outline-none focus:border-indigo-500 resize-none shadow-sm placeholder:text-zinc-400"
                       rows={4}
                       placeholder="Step-by-step improvement roadmap..."
                       value={newSession.plan}

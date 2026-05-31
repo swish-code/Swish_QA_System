@@ -216,13 +216,13 @@ export default function ActivityAudit() {
   const isSupervisor = user?.role === 'supervisor';
 
   return (
-    <div className="space-y-8 pb-10">
+    <div className="space-y-6 sm:space-y-8 pb-10">
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
         <div className="space-y-2">
           <div className="flex items-center gap-3">
             <div className="w-1.5 h-6 bg-indigo-600 rounded-full" />
-            <h2 className="text-4xl font-black text-zinc-900 dark:text-white tracking-tighter uppercase italic">
+            <h2 className="text-2xl sm:text-3xl md:text-4xl font-black text-zinc-900 dark:text-white tracking-tighter uppercase italic">
               Activity & Audit Logs
             </h2>
           </div>
@@ -251,7 +251,7 @@ export default function ActivityAudit() {
       </div>
 
       {/* Analytics Dashboard mini widgets */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
         {/* Total Logs */}
         <div className="bg-white dark:bg-zinc-950 border border-zinc-100 dark:border-zinc-850 p-6 rounded-3xl shadow-sm flex items-center gap-4">
           <div className="w-12 h-12 bg-indigo-50 dark:bg-indigo-950/40 rounded-2xl flex items-center justify-center text-indigo-600 dark:text-indigo-400">
@@ -312,14 +312,14 @@ export default function ActivityAudit() {
         </h3>
 
         {/* Row 1: Search & Date picker */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 sm:gap-6">
           {/* Keyword Search */}
           <div className="relative group">
             <Search className="absolute left-6 top-1/2 -translate-y-1/2 text-zinc-400 group-focus-within:text-indigo-600 transition-colors" size={18} />
             <input 
               type="text" 
               placeholder="Search by keyword (Enter)..." 
-              className="w-full bg-slate-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl pl-16 pr-6 py-4 text-xs font-black uppercase tracking-tight outline-none focus:border-indigo-600 transition-all placeholder:text-zinc-300 dark:placeholder:text-zinc-700 italic shadow-sm" 
+              className="w-full bg-slate-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl pl-16 pr-6 py-4 text-xs font-black uppercase tracking-tight outline-none focus:border-indigo-600 placeholder:text-zinc-300 dark:placeholder:text-zinc-700 italic shadow-sm"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               onKeyDown={handleSearchKeyPress}
@@ -331,7 +331,7 @@ export default function ActivityAudit() {
             <span className="absolute left-6 text-zinc-400 font-black text-[9px] uppercase tracking-widest pl-1">From:</span>
             <input 
               type="date"
-              className="w-full bg-slate-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl pl-20 pr-6 py-4 text-xs font-black uppercase tracking-tight outline-none focus:border-indigo-600 transition-all shadow-sm" 
+              className="w-full bg-slate-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl pl-20 pr-6 py-4 text-xs font-black uppercase tracking-tight outline-none focus:border-indigo-600 shadow-sm"
               value={fromDate}
               onChange={(e) => setFromDate(e.target.value)}
             />
@@ -342,7 +342,7 @@ export default function ActivityAudit() {
             <span className="absolute left-6 text-zinc-400 font-black text-[9px] uppercase tracking-widest pl-1">To:</span>
             <input 
               type="date"
-              className="w-full bg-slate-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl pl-20 pr-6 py-4 text-xs font-black uppercase tracking-tight outline-none focus:border-indigo-600 transition-all shadow-sm" 
+              className="w-full bg-slate-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl pl-20 pr-6 py-4 text-xs font-black uppercase tracking-tight outline-none focus:border-indigo-600 shadow-sm"
               value={toDate}
               onChange={(e) => setToDate(e.target.value)}
             />
@@ -350,10 +350,10 @@ export default function ActivityAudit() {
         </div>
 
         {/* Row 2: Category selections */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-4 sm:gap-6">
           {/* Filter by User */}
           <select
-            className="bg-slate-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl px-6 py-4 text-[10px] font-black uppercase tracking-widest text-zinc-500 hover:text-indigo-600 transition-all cursor-pointer shadow-sm outline-none"
+            className="bg-slate-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl px-6 py-4 text-[10px] font-black uppercase tracking-widest text-zinc-500 hover:text-indigo-600 cursor-pointer shadow-sm outline-none"
             value={filterUser}
             onChange={(e) => { setFilterUser(e.target.value); setPage(1); }}
           >
@@ -365,7 +365,7 @@ export default function ActivityAudit() {
 
           {/* Filter by Action Code */}
           <select
-            className="bg-slate-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl px-6 py-4 text-[10px] font-black uppercase tracking-widest text-zinc-500 hover:text-indigo-600 transition-all cursor-pointer shadow-sm outline-none"
+            className="bg-slate-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl px-6 py-4 text-[10px] font-black uppercase tracking-widest text-zinc-500 hover:text-indigo-600 cursor-pointer shadow-sm outline-none"
             value={filterAction}
             onChange={(e) => { setFilterAction(e.target.value); setPage(1); }}
           >
@@ -377,7 +377,7 @@ export default function ActivityAudit() {
 
           {/* Filter by Section */}
           <select
-            className="bg-slate-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl px-6 py-4 text-[10px] font-black uppercase tracking-widest text-zinc-500 hover:text-indigo-600 transition-all cursor-pointer shadow-sm outline-none"
+            className="bg-slate-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl px-6 py-4 text-[10px] font-black uppercase tracking-widest text-zinc-500 hover:text-indigo-600 cursor-pointer shadow-sm outline-none"
             value={filterSection}
             onChange={(e) => { setFilterSection(e.target.value); setPage(1); }}
           >
@@ -389,7 +389,7 @@ export default function ActivityAudit() {
 
           {/* Filter by Status */}
           <select
-            className="bg-slate-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl px-6 py-4 text-[10px] font-black uppercase tracking-widest text-zinc-500 hover:text-indigo-600 transition-all cursor-pointer shadow-sm outline-none"
+            className="bg-slate-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl px-6 py-4 text-[10px] font-black uppercase tracking-widest text-zinc-500 hover:text-indigo-600 cursor-pointer shadow-sm outline-none"
             value={filterStatus}
             onChange={(e) => { setFilterStatus(e.target.value); setPage(1); }}
           >
@@ -420,8 +420,8 @@ export default function ActivityAudit() {
             <p className="text-[10px] font-black text-zinc-400 uppercase tracking-[0.4em] italic">No audit records found matching configuration</p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left">
+          <div className="overflow-x-auto -mx-4 sm:mx-0">
+            <table className="w-full text-left min-w-[720px]">
               <thead>
                 <tr className="bg-zinc-50/50 dark:bg-zinc-950/30 text-zinc-400 dark:text-zinc-600 text-[10px] uppercase font-black tracking-[0.2em] italic border-b border-zinc-100 dark:border-zinc-800">
                   <th className="px-8 py-6">ID</th>
