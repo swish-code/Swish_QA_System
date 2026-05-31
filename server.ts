@@ -1,22 +1,21 @@
 import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
-import Database from "better-sqlite3";
+import { createDb } from "./db";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import cors from "cors";
 
 const JWT_SECRET = "super-secret-key-123";
-const DB_PATH = "qualityhub.db";
 
 async function startServer() {
   const app = express();
   const PORT = 3000;
 
   try {
-    const db = new Database(DB_PATH);
-    
-    db.exec(`
+    const db = createDb();
+
+    await db.exec(`
       CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         display_name TEXT,
@@ -87,7 +86,7 @@ async function startServer() {
     console.log("Database tables initialized successfully");
 
     // Table for dynamic form settings
-    db.exec(`
+    await db.exec(`
       CREATE TABLE IF NOT EXISTS form_settings (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         field_type TEXT NOT NULL,
@@ -101,7 +100,7 @@ async function startServer() {
     `);
 
     // Table for dynamic Audit Logs / Activity Trail
-    db.exec(`
+    await db.exec(`
       CREATE TABLE IF NOT EXISTS audit_logs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER,
@@ -117,13 +116,13 @@ async function startServer() {
     `);
 
     // Migration for existing tables
-    try { db.exec("ALTER TABLE escalation_logs ADD COLUMN old_score REAL"); } catch(e) {}
-    try { db.exec("ALTER TABLE escalation_logs ADD COLUMN new_score REAL"); } catch(e) {}
+    try { await db.exec("ALTER TABLE escalation_logs ADD COLUMN IF NOT EXISTS old_score REAL"); } catch(e) {}
+    try { await db.exec("ALTER TABLE escalation_logs ADD COLUMN IF NOT EXISTS new_score REAL"); } catch(e) {}
 
     // Seed initial form settings if empty or missing evaluation criteria
     try {
-      const settingsCount = (db.prepare("SELECT COUNT(*) as count FROM form_settings").get() as any).count;
-      const evalCount = (db.prepare("SELECT COUNT(*) as count FROM form_settings WHERE field_type = 'eval_section'").get() as any).count;
+      const settingsCount = (await db.prepare("SELECT COUNT(*) as count FROM form_settings").get() as any).count;
+      const evalCount = (await db.prepare("SELECT COUNT(*) as count FROM form_settings WHERE field_type = 'eval_section'").get() as any).count;
       
       if (settingsCount === 0 || evalCount === 0) {
         const initialSettings = [
@@ -159,23 +158,23 @@ async function startServer() {
         ];
 
         const insertSetting = db.prepare("INSERT INTO form_settings (field_type, label_en, label_ar, value) VALUES (?, ?, ?, ?)");
-        initialSettings.forEach(s => {
+        for (const s of initialSettings) {
           // Check if already exists to avoid duplicates if partially seeded
-          const exists = db.prepare("SELECT id FROM form_settings WHERE field_type = ? AND label_en = ?").get(s.type, s.en);
+          const exists = await db.prepare("SELECT id FROM form_settings WHERE field_type = ? AND label_en = ?").get(s.type, s.en);
           if (!exists) {
-            insertSetting.run(s.type, s.en, s.ar, s.val);
+            await insertSetting.run(s.type, s.en, s.ar, s.val);
           }
-        });
+        }
       }
     } catch (e) {
       console.error("Migration/Seed error for form_settings:", e);
     }
 
     // Seed Admin User
-    const adminExists = db.prepare("SELECT * FROM users WHERE role = 'supervisor'").get();
+    const adminExists = await db.prepare("SELECT * FROM users WHERE role = 'supervisor'").get();
     if (!adminExists) {
       const hashedPassword = bcrypt.hashSync("admin123", 10);
-      db.prepare("INSERT INTO users (display_name, username, password, role, department) VALUES (?, ?, ?, ?, ?)")
+      await db.prepare("INSERT INTO users (display_name, username, password, role, department) VALUES (?, ?, ?, ?, ?)")
         .run("Admin Supervisor", "admin", hashedPassword, "supervisor", "Quality");
     }
 
@@ -201,7 +200,7 @@ async function startServer() {
         return originalJson.call(this, body);
       };
 
-      res.on('finish', () => {
+      res.on('finish', async () => {
         try {
           // Identify the logged in user performing this operation
           let userId: number | null = null;
@@ -215,7 +214,7 @@ async function startServer() {
               const decoded = jwt.verify(token, JWT_SECRET) as any;
               if (decoded && decoded.id) {
                 userId = decoded.id;
-                const u = db.prepare("SELECT display_name FROM users WHERE id = ?").get(userId) as any;
+                const u = await db.prepare("SELECT display_name FROM users WHERE id = ?").get(userId) as any;
                 if (u) userName = u.display_name;
               }
             } catch (err) {
@@ -226,19 +225,19 @@ async function startServer() {
           // 2. Fallbacks (custom tracking header or payload attributes)
           if (!userId && req.headers['x-user-id']) {
             userId = parseInt(req.headers['x-user-id'] as string);
-            const u = db.prepare("SELECT display_name FROM users WHERE id = ?").get(userId) as any;
+            const u = await db.prepare("SELECT display_name FROM users WHERE id = ?").get(userId) as any;
             if (u) userName = u.display_name;
           }
 
           if (!userId && req.body && req.body.user_id) {
             userId = parseInt(req.body.user_id);
-            const u = db.prepare("SELECT display_name FROM users WHERE id = ?").get(userId) as any;
+            const u = await db.prepare("SELECT display_name FROM users WHERE id = ?").get(userId) as any;
             if (u) userName = u.display_name;
           }
 
           if (!userId && req.body && req.body.qa_id) {
             userId = parseInt(req.body.qa_id);
-            const u = db.prepare("SELECT display_name FROM users WHERE id = ?").get(userId) as any;
+            const u = await db.prepare("SELECT display_name FROM users WHERE id = ?").get(userId) as any;
             if (u) userName = u.display_name;
           }
 
@@ -328,7 +327,7 @@ async function startServer() {
           const actorId = userId || null;
 
           // Save audit logs securely to database
-          db.prepare(`
+          await db.prepare(`
             INSERT INTO audit_logs (user_id, user_name, action_type, section, details, ip_address, user_agent, status)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
           `).run(actorId, actorName, actionType, section, details, ipClean, userAgent, status);
@@ -342,9 +341,9 @@ async function startServer() {
     });
 
     // Health check
-    app.get("/api/health", (req, res) => {
+    app.get("/api/health", async (req, res) => {
       try {
-        db.prepare('SELECT 1').get();
+        await db.prepare('SELECT 1').get();
         res.json({ status: "ok", database: "connected", timestamp: new Date().toISOString() });
       } catch (error) {
         res.status(500).json({ status: "error", message: "Database connection failed", detail: error instanceof Error ? error.message : String(error) });
@@ -352,9 +351,9 @@ async function startServer() {
     });
 
     // Auth
-    app.post("/api/login", (req, res) => {
+    app.post("/api/login", async (req, res) => {
       const { username, password } = req.body;
-      const user = db.prepare("SELECT * FROM users WHERE username = ?").get(username) as any;
+      const user = await db.prepare("SELECT * FROM users WHERE username = ?").get(username) as any;
       if (!user || !bcrypt.compareSync(password, user.password)) {
         return res.status(401).json({ error: "Invalid credentials" });
       }
@@ -363,16 +362,16 @@ async function startServer() {
     });
 
     // Users Management
-    app.get("/api/users", (req, res) => {
-      const users = db.prepare("SELECT id, display_name, username, role, department, tl_id FROM users").all();
+    app.get("/api/users", async (req, res) => {
+      const users = await db.prepare("SELECT id, display_name, username, role, department, tl_id FROM users").all();
       res.json(users);
     });
 
-    app.post("/api/users", (req, res) => {
+    app.post("/api/users", async (req, res) => {
       const { display_name, username, password, role, department, tl_id } = req.body;
       const hashedPassword = bcrypt.hashSync(password, 10);
       try {
-        db.prepare("INSERT INTO users (display_name, username, password, role, department, tl_id) VALUES (?, ?, ?, ?, ?, ?)")
+        await db.prepare("INSERT INTO users (display_name, username, password, role, department, tl_id) VALUES (?, ?, ?, ?, ?, ?)")
           .run(display_name, username, hashedPassword, role, department, tl_id || null);
         res.json({ success: true });
       } catch (e) {
@@ -381,20 +380,20 @@ async function startServer() {
     });
 
     // Form Config
-    app.get("/api/forms", (req, res) => {
-      const forms = db.prepare("SELECT * FROM form_config").all();
+    app.get("/api/forms", async (req, res) => {
+      const forms = await db.prepare("SELECT * FROM form_config").all();
       res.json(forms);
     });
 
-    app.post("/api/forms", (req, res) => {
+    app.post("/api/forms", async (req, res) => {
       const { label, field_type, options, section, required, call_type } = req.body;
-      db.prepare("INSERT INTO form_config (label, field_type, options, section, required, call_type) VALUES (?, ?, ?, ?, ?, ?)")
+      await db.prepare("INSERT INTO form_config (label, field_type, options, section, required, call_type) VALUES (?, ?, ?, ?, ?, ?)")
         .run(label, field_type, JSON.stringify(options), section, required ? 1 : 0, call_type);
       res.json({ success: true });
     });
 
     // Evaluations
-    app.get("/api/evaluations", (req, res) => {
+    app.get("/api/evaluations", async (req, res) => {
       const { user_id, role, agent_id, from_date, to_date, status, search } = req.query;
       const page = parseInt(req.query.page as string) || 1;
       const limit = parseInt(req.query.limit as string) || 10;
@@ -443,18 +442,18 @@ async function startServer() {
       }
 
       // Count total items
-      const countResult = db.prepare(`SELECT COUNT(*) as count ${baseQuery}`).get(...params) as { count: number };
+      const countResult = await db.prepare(`SELECT COUNT(*) as count ${baseQuery}`).get(...params) as { count: number };
       const totalItems = countResult.count;
       const totalPages = Math.ceil(totalItems / limit);
 
       // Get paginated data
       const query = `
-        SELECT e.*, a.display_name as agent_name, q.display_name as qa_name 
+        SELECT e.*, a.display_name as agent_name, q.display_name as qa_name
         ${baseQuery}
         ORDER BY e.id DESC
         LIMIT ? OFFSET ?
       `;
-      const evals = db.prepare(query).all(...params, limit, offset) as any[];
+      const evals = await db.prepare(query).all(...params, limit, offset) as any[];
       
       res.json({
         data: evals.map((e) => {
@@ -475,20 +474,20 @@ async function startServer() {
       });
     });
 
-    app.post("/api/evaluations", (req, res) => {
+    app.post("/api/evaluations", async (req, res) => {
       const { date, agent_id, qa_id, brand, call_type, final_score, critical_failure, data } = req.body;
-      
+
       // Determine initial status based on score
       const status = final_score === 100 ? 'Sent to Agent' : 'Pending Review';
-      
-      const result = db.prepare("INSERT INTO evaluations (date, agent_id, qa_id, brand, call_type, final_score, critical_failure, data, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+
+      const result = await db.prepare("INSERT INTO evaluations (date, agent_id, qa_id, brand, call_type, final_score, critical_failure, data, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
         .run(date, agent_id, qa_id, brand, call_type, final_score, critical_failure ? 1 : 0, JSON.stringify(data), status);
-      
+
       const evaluation_id = result.lastInsertRowid;
 
       // Extract details for richer notification
-      const agent = db.prepare("SELECT display_name, tl_id FROM users WHERE id = ?").get(agent_id) as any;
-      const evaluator = db.prepare("SELECT display_name FROM users WHERE id = ?").get(qa_id) as any;
+      const agent = await db.prepare("SELECT display_name, tl_id FROM users WHERE id = ?").get(agent_id) as any;
+      const evaluator = await db.prepare("SELECT display_name FROM users WHERE id = ?").get(qa_id) as any;
       const notes = data?.feedback?.general || 'No specific notes provided';
       const timestamp = new Date().toLocaleString();
 
@@ -503,31 +502,31 @@ async function startServer() {
       // Notification logic
       if (status === 'Sent to Agent') {
         // Notify Agent
-        db.prepare("INSERT INTO notifications (user_id, title, message, evaluation_id) VALUES (?, ?, ?, ?)")
+        await db.prepare("INSERT INTO notifications (user_id, title, message, evaluation_id) VALUES (?, ?, ?, ?)")
           .run(agent_id, "New Evaluation Received", notificationMsg, evaluation_id);
       } else {
         // Notify TL if evaluation needs review
         if (agent && agent.tl_id) {
-          db.prepare("INSERT INTO notifications (user_id, title, message, evaluation_id) VALUES (?, ?, ?, ?)")
+          await db.prepare("INSERT INTO notifications (user_id, title, message, evaluation_id) VALUES (?, ?, ?, ?)")
             .run(agent.tl_id, "Evaluation Pending Review", notificationMsg, evaluation_id);
         }
       }
 
-      // Always notify the agent that an evaluation was performed (even if pending review, maybe? 
+      // Always notify the agent that an evaluation was performed (even if pending review, maybe?
       // User said: "Whenever Quality Team submits, a notification should automatically be sent to: The Team Leader AND the employee")
       if (status !== 'Sent to Agent') {
-         db.prepare("INSERT INTO notifications (user_id, title, message, evaluation_id) VALUES (?, ?, ?, ?)")
+         await db.prepare("INSERT INTO notifications (user_id, title, message, evaluation_id) VALUES (?, ?, ?, ?)")
            .run(agent_id, "Call Evaluated (Awaiting Review)", notificationMsg, evaluation_id);
       }
 
       res.json({ success: true, id: evaluation_id });
     });
 
-    app.put("/api/evaluations/:id", (req, res) => {
+    app.put("/api/evaluations/:id", async (req, res) => {
       const { date, agent_id, qa_id, brand, call_type, final_score, critical_failure, data, status } = req.body;
-      db.prepare(`
-        UPDATE evaluations 
-        SET date = ?, agent_id = ?, qa_id = ?, brand = ?, call_type = ?, 
+      await db.prepare(`
+        UPDATE evaluations
+        SET date = ?, agent_id = ?, qa_id = ?, brand = ?, call_type = ?,
             final_score = ?, critical_failure = ?, data = ?, status = ?
         WHERE id = ?
       `).run(date, agent_id, qa_id, brand, call_type, final_score, critical_failure ? 1 : 0, JSON.stringify(data), status || 'completed', req.params.id);
@@ -535,74 +534,74 @@ async function startServer() {
     });
 
     // Escalations & Workflow
-    app.post("/api/evaluations/:id/tl-action", (req, res) => {
+    app.post("/api/evaluations/:id/tl-action", async (req, res) => {
       const { user_id, action, comment } = req.body; // action: approved / escalated
       const evaluation_id = req.params.id;
-      
-      const evaluation = db.prepare("SELECT agent_id, final_score, qa_id FROM evaluations WHERE id = ?").get(evaluation_id) as any;
+
+      const evaluation = await db.prepare("SELECT agent_id, final_score, qa_id FROM evaluations WHERE id = ?").get(evaluation_id) as any;
       if (!evaluation) return res.status(404).json({ error: "Evaluation not found" });
 
       const newStatus = action === 'approved' ? 'Sent to Agent' : 'Escalated';
-      
-      db.prepare("UPDATE evaluations SET status = ? WHERE id = ?").run(newStatus, evaluation_id);
-      db.prepare("INSERT INTO escalation_logs (evaluation_id, user_id, role, action, comment, old_score, new_score) VALUES (?, ?, 'tl', ?, ?, ?, ?)")
+
+      await db.prepare("UPDATE evaluations SET status = ? WHERE id = ?").run(newStatus, evaluation_id);
+      await db.prepare("INSERT INTO escalation_logs (evaluation_id, user_id, role, action, comment, old_score, new_score) VALUES (?, ?, 'tl', ?, ?, ?, ?)")
         .run(evaluation_id, user_id, action, comment, evaluation.final_score, evaluation.final_score);
 
       // Notifications
       if (action === 'approved') {
-        db.prepare("INSERT INTO notifications (user_id, title, message, evaluation_id) VALUES (?, ?, ?, ?)")
+        await db.prepare("INSERT INTO notifications (user_id, title, message, evaluation_id) VALUES (?, ?, ?, ?)")
           .run(evaluation.agent_id, "Evaluation Approved", `Your evaluation has been approved by your TL. Score: ${evaluation.final_score}%`, evaluation_id);
       } else {
-        db.prepare("INSERT INTO notifications (user_id, title, message, evaluation_id) VALUES (?, ?, ?, ?)")
+        await db.prepare("INSERT INTO notifications (user_id, title, message, evaluation_id) VALUES (?, ?, ?, ?)")
           .run(evaluation.qa_id, "Evaluation Escalated", `Evaluation ${evaluation_id} has been escalated by TL. Reason: ${comment}`, evaluation_id);
       }
 
       res.json({ success: true, status: newStatus });
     });
 
-    app.post("/api/evaluations/:id/qa-action", (req, res) => {
+    app.post("/api/evaluations/:id/qa-action", async (req, res) => {
       const { user_id, action, comment, newData } = req.body; // action: approved / rejected
       const evaluation_id = req.params.id;
 
-      const evaluation = db.prepare("SELECT agent_id, final_score, qa_id FROM evaluations WHERE id = ?").get(evaluation_id) as any;
+      const evaluation = await db.prepare("SELECT agent_id, final_score, qa_id FROM evaluations WHERE id = ?").get(evaluation_id) as any;
       if (!evaluation) return res.status(404).json({ error: "Evaluation not found" });
 
       const newStatus = action === 'approved' ? 'Quality Approved' : 'Rejected by Quality';
-      
+
       if (action === 'approved' && newData) {
-        db.prepare(`
-          UPDATE evaluations 
+        await db.prepare(`
+          UPDATE evaluations
           SET final_score = ?, critical_failure = ?, data = ?, status = ?
           WHERE id = ?
         `).run(newData.final_score, newData.critical_failure ? 1 : 0, JSON.stringify(newData.data), newStatus, evaluation_id);
       } else {
-        db.prepare("UPDATE evaluations SET status = ? WHERE id = ?").run(newStatus, evaluation_id);
+        await db.prepare("UPDATE evaluations SET status = ? WHERE id = ?").run(newStatus, evaluation_id);
       }
 
-      db.prepare("INSERT INTO escalation_logs (evaluation_id, user_id, role, action, comment, old_score, new_score) VALUES (?, ?, 'qa', ?, ?, ?, ?)")
+      await db.prepare("INSERT INTO escalation_logs (evaluation_id, user_id, role, action, comment, old_score, new_score) VALUES (?, ?, 'qa', ?, ?, ?, ?)")
         .run(evaluation_id, user_id, action, comment, evaluation.final_score, action === 'approved' && newData ? newData.final_score : evaluation.final_score);
 
       // Final recipients for Approved/Rejected: TL and Agent
-      const agent = db.prepare("SELECT tl_id FROM users WHERE id = ?").get(evaluation.agent_id) as any;
-      
+      const agent = await db.prepare("SELECT tl_id FROM users WHERE id = ?").get(evaluation.agent_id) as any;
+
       // Notify Agent
-      db.prepare("INSERT INTO notifications (user_id, title, message, evaluation_id) VALUES (?, ?, ?, ?)")
+      await db.prepare("INSERT INTO notifications (user_id, title, message, evaluation_id) VALUES (?, ?, ?, ?)")
         .run(evaluation.agent_id, `Evaluation ${newStatus}`, `Your evaluation has been ${newStatus.toLowerCase()}.`, evaluation_id);
-      
+
       // Notify TL
       if (agent && agent.tl_id) {
-        db.prepare("INSERT INTO notifications (user_id, title, message, evaluation_id) VALUES (?, ?, ?, ?)")
+        await db.prepare("INSERT INTO notifications (user_id, title, message, evaluation_id) VALUES (?, ?, ?, ?)")
           .run(agent.tl_id, `Evaluation ${newStatus}`, `Escalation for evaluation ${evaluation_id} has been ${newStatus.toLowerCase()}. Reason: ${comment}`, evaluation_id);
       }
 
       res.json({ success: true });
     });
 
-    app.post("/api/evaluations/:id/escalation-respond", (req, res) => {
+    app.post("/api/evaluations/:id/escalation-respond", async (req, res) => {
       const { user_id, role, action, comment, old_score, new_score } = req.body;
       const evaluation_id = req.params.id;
 
-      const evaluation = db.prepare("SELECT agent_id, final_score, qa_id FROM evaluations WHERE id = ?").get(evaluation_id) as any;
+      const evaluation = await db.prepare("SELECT agent_id, final_score, qa_id FROM evaluations WHERE id = ?").get(evaluation_id) as any;
       if (!evaluation) return res.status(404).json({ error: "Evaluation not found" });
 
       let newStatus = "";
@@ -612,38 +611,38 @@ async function startServer() {
         newStatus = action === 'approved' ? 'Quality Approved' : 'Rejected by Quality';
       }
 
-      db.prepare("UPDATE evaluations SET status = ? WHERE id = ?").run(newStatus, evaluation_id);
-      db.prepare("INSERT INTO escalation_logs (evaluation_id, user_id, role, action, comment, old_score, new_score) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      await db.prepare("UPDATE evaluations SET status = ? WHERE id = ?").run(newStatus, evaluation_id);
+      await db.prepare("INSERT INTO escalation_logs (evaluation_id, user_id, role, action, comment, old_score, new_score) VALUES (?, ?, ?, ?, ?, ?, ?)")
         .run(evaluation_id, user_id, role, action, comment, old_score ?? evaluation.final_score, new_score ?? evaluation.final_score);
 
       res.json({ success: true });
     });
 
     // Form Settings APIs
-    app.get("/api/settings/form", (req, res) => {
-      const settings = db.prepare("SELECT * FROM form_settings ORDER BY field_type, sort_order ASC").all();
+    app.get("/api/settings/form", async (req, res) => {
+      const settings = await db.prepare("SELECT * FROM form_settings ORDER BY field_type, sort_order ASC").all();
       res.json(settings);
     });
 
-    app.post("/api/settings/form", (req, res) => {
+    app.post("/api/settings/form", async (req, res) => {
       const { field_type, label_en, label_ar, value, is_active, sort_order, id } = req.body;
       if (id) {
-        db.prepare("UPDATE form_settings SET field_type=?, label_en=?, label_ar=?, value=?, is_active=?, sort_order=? WHERE id=?")
+        await db.prepare("UPDATE form_settings SET field_type=?, label_en=?, label_ar=?, value=?, is_active=?, sort_order=? WHERE id=?")
           .run(field_type, label_en, label_ar, value, is_active ? 1 : 0, sort_order || 0, id);
       } else {
-        db.prepare("INSERT INTO form_settings (field_type, label_en, label_ar, value, is_active, sort_order) VALUES (?, ?, ?, ?, ?, ?)")
+        await db.prepare("INSERT INTO form_settings (field_type, label_en, label_ar, value, is_active, sort_order) VALUES (?, ?, ?, ?, ?, ?)")
           .run(field_type, label_en, label_ar, value, is_active !== undefined ? (is_active ? 1 : 0) : 1, sort_order || 0);
       }
       res.json({ success: true });
     });
 
-    app.delete("/api/settings/form/:id", (req, res) => {
-      db.prepare("DELETE FROM form_settings WHERE id = ?").run(req.params.id);
+    app.delete("/api/settings/form/:id", async (req, res) => {
+      await db.prepare("DELETE FROM form_settings WHERE id = ?").run(req.params.id);
       res.json({ success: true });
     });
 
     // Audit Logs Query & Management API
-    app.get("/api/audit-logs", (req, res) => {
+    app.get("/api/audit-logs", async (req, res) => {
       try {
         const { search, user_name, action_type, status, section, from_date, to_date } = req.query;
         const page = parseInt(req.query.page as string) || 1;
@@ -689,23 +688,23 @@ async function startServer() {
           params.push(`${to_date} 23:59:59`);
         }
 
-        const countResult = db.prepare(`SELECT COUNT(*) as count ${baseQuery}`).get(...params) as { count: number };
+        const countResult = await db.prepare(`SELECT COUNT(*) as count ${baseQuery}`).get(...params) as { count: number };
         const totalItems = countResult.count;
         const totalPages = Math.ceil(totalItems / limit);
 
         const query = `
-          SELECT * 
-          ${baseQuery} 
-          ORDER BY id DESC 
+          SELECT *
+          ${baseQuery}
+          ORDER BY id DESC
           LIMIT ? OFFSET ?
         `;
-        
-        const logs = db.prepare(query).all(...params, limit, offset);
+
+        const logs = await db.prepare(query).all(...params, limit, offset);
 
         // Also get unique filters list for dropdown fields
-        const usersList = db.prepare("SELECT DISTINCT user_name FROM audit_logs WHERE user_name IS NOT NULL AND user_name != 'Guest / System' ORDER BY user_name ASC").all().map((r: any) => r.user_name);
-        const actionsList = db.prepare("SELECT DISTINCT action_type FROM audit_logs ORDER BY action_type ASC").all().map((r: any) => r.action_type);
-        const sectionsList = db.prepare("SELECT DISTINCT section FROM audit_logs ORDER BY section ASC").all().map((r: any) => r.section);
+        const usersList = (await db.prepare("SELECT DISTINCT user_name FROM audit_logs WHERE user_name IS NOT NULL AND user_name != 'Guest / System' ORDER BY user_name ASC").all()).map((r: any) => r.user_name);
+        const actionsList = (await db.prepare("SELECT DISTINCT action_type FROM audit_logs ORDER BY action_type ASC").all()).map((r: any) => r.action_type);
+        const sectionsList = (await db.prepare("SELECT DISTINCT section FROM audit_logs ORDER BY section ASC").all()).map((r: any) => r.section);
 
         res.json({
           data: logs,
@@ -729,18 +728,18 @@ async function startServer() {
     });
 
     // Clear logs (restrict to Supervisor)
-    app.post("/api/audit-logs/clear", (req, res) => {
+    app.post("/api/audit-logs/clear", async (req, res) => {
       try {
         const userId = req.headers['x-user-id'];
         if (!userId) {
           return res.status(401).json({ error: "Unauthorized. Missing User ID header." });
         }
-        const user = db.prepare("SELECT role FROM users WHERE id = ?").get(userId) as any;
+        const user = await db.prepare("SELECT role FROM users WHERE id = ?").get(userId) as any;
         if (!user || user.role !== 'supervisor') {
           return res.status(403).json({ error: "Only Super Admin (Supervisor) can clear logs." });
         }
 
-        db.prepare("DELETE FROM audit_logs").run();
+        await db.prepare("DELETE FROM audit_logs").run();
         res.json({ success: true, message: "All audit logs successfully cleared." });
       } catch (err: any) {
         res.status(500).json({ error: err.message });
@@ -748,45 +747,45 @@ async function startServer() {
     });
 
     // Delete single log entry (restrict to Supervisor)
-    app.delete("/api/audit-logs/:id", (req, res) => {
+    app.delete("/api/audit-logs/:id", async (req, res) => {
       try {
         const userId = req.headers['x-user-id'];
         if (!userId) {
           return res.status(401).json({ error: "Unauthorized. Missing User ID header." });
         }
-        const user = db.prepare("SELECT role FROM users WHERE id = ?").get(userId) as any;
+        const user = await db.prepare("SELECT role FROM users WHERE id = ?").get(userId) as any;
         if (!user || user.role !== 'supervisor') {
           return res.status(403).json({ error: "Only Super Admin (Supervisor) can delete a log entry." });
         }
 
-        db.prepare("DELETE FROM audit_logs WHERE id = ?").run(req.params.id);
+        await db.prepare("DELETE FROM audit_logs WHERE id = ?").run(req.params.id);
         res.json({ success: true, message: "Audit log entry deleted successfully." });
       } catch (err: any) {
         res.status(500).json({ error: err.message });
       }
     });
 
-    app.get("/api/notifications", (req, res) => {
+    app.get("/api/notifications", async (req, res) => {
       const user_id = req.query.user_id;
       if (!user_id) return res.status(400).json({ error: "user_id required" });
-      const notifications = db.prepare("SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 50").all(user_id);
+      const notifications = await db.prepare("SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 50").all(user_id);
       res.json(notifications);
     });
 
-    app.post("/api/notifications/:id/read", (req, res) => {
-      db.prepare("UPDATE notifications SET is_read = 1 WHERE id = ?").run(req.params.id);
+    app.post("/api/notifications/:id/read", async (req, res) => {
+      await db.prepare("UPDATE notifications SET is_read = 1 WHERE id = ?").run(req.params.id);
       res.json({ success: true });
     });
 
-    app.post("/api/notifications/read-all", (req, res) => {
+    app.post("/api/notifications/read-all", async (req, res) => {
       const { user_id } = req.body;
       if (!user_id) return res.status(400).json({ error: "user_id required" });
-      db.prepare("UPDATE notifications SET is_read = 1 WHERE user_id = ?").run(user_id);
+      await db.prepare("UPDATE notifications SET is_read = 1 WHERE user_id = ?").run(user_id);
       res.json({ success: true });
     });
 
-    app.get("/api/escalations/history", (req, res) => {
-      const history = db.prepare(`
+    app.get("/api/escalations/history", async (req, res) => {
+      const history = await db.prepare(`
         SELECT l.*, u.display_name as user_name, e.call_type, e.brand, e.date as evaluation_date
         FROM escalation_logs l
         JOIN users u ON l.user_id = u.id
@@ -796,8 +795,8 @@ async function startServer() {
       res.json(history);
     });
 
-    app.get("/api/evaluations/:id/escalation-history", (req, res) => {
-      const history = db.prepare(`
+    app.get("/api/evaluations/:id/escalation-history", async (req, res) => {
+      const history = await db.prepare(`
         SELECT l.*, u.display_name as user_name
         FROM escalation_logs l
         JOIN users u ON l.user_id = u.id
@@ -808,7 +807,7 @@ async function startServer() {
     });
 
     // Coaching
-    app.get("/api/coaching", (req, res) => {
+    app.get("/api/coaching", async (req, res) => {
       try {
         const { user_id, role } = req.query;
         let query = `
@@ -828,23 +827,23 @@ async function startServer() {
         }
         // Supervisors see all
 
-        const sessions = db.prepare(query + " ORDER BY c.created_at DESC").all(...params);
+        const sessions = await db.prepare(query + " ORDER BY c.created_at DESC").all(...params);
         res.json(sessions);
       } catch (e: any) {
         res.status(500).json({ error: e.message });
       }
     });
 
-    app.post("/api/coaching", (req, res) => {
+    app.post("/api/coaching", async (req, res) => {
       try {
         const { agent_id, tl_id, weaknesses, notes, plan, evaluation_id } = req.body;
-        const result = db.prepare("INSERT INTO coaching_sessions (agent_id, tl_id, weaknesses, notes, plan) VALUES (?, ?, ?, ?, ?)")
+        const result = await db.prepare("INSERT INTO coaching_sessions (agent_id, tl_id, weaknesses, notes, plan) VALUES (?, ?, ?, ?, ?)")
           .run(agent_id, tl_id, weaknesses, notes, plan);
-        
+
         const coaching_id = result.lastInsertRowid;
 
         // Create notification for the agent
-        db.prepare("INSERT INTO notifications (user_id, title, message, evaluation_id) VALUES (?, ?, ?, ?)")
+        await db.prepare("INSERT INTO notifications (user_id, title, message, evaluation_id) VALUES (?, ?, ?, ?)")
           .run(agent_id, "New Coaching Session", `Your TL has scheduled a coaching session for you.`, evaluation_id || null);
 
         res.json({ success: true, id: coaching_id });
@@ -854,16 +853,16 @@ async function startServer() {
     });
 
     // Stats & Analytics
-    app.get("/api/stats/team", (req, res) => {
+    app.get("/api/stats/team", async (req, res) => {
       const { role, id, department } = req.query;
-      
+
       let agentsQuery = "SELECT id, display_name FROM users WHERE role = 'agent'";
       let evalsQuery = "SELECT * FROM evaluations";
       let coachingQuery = "SELECT * FROM coaching_sessions";
-      
-      const agents = db.prepare(agentsQuery).all() as any[];
-      const evals = db.prepare(evalsQuery).all() as any[];
-      const coaching = db.prepare(coachingQuery).all() as any[];
+
+      const agents = await db.prepare(agentsQuery).all() as any[];
+      const evals = await db.prepare(evalsQuery).all() as any[];
+      const coaching = await db.prepare(coachingQuery).all() as any[];
       
       // Calculate scores per agent
       const teamPerformance = agents.map(agent => {
@@ -895,7 +894,7 @@ async function startServer() {
     });
 
     // Stats & Analytics
-    app.get("/api/stats/lob", (req, res) => {
+    app.get("/api/stats/lob", async (req, res) => {
       try {
         const { department, from_date, to_date } = req.query;
         
@@ -919,8 +918,8 @@ async function startServer() {
           params.push(to_date);
         }
 
-        const agents = db.prepare(agentsQuery).all(...(department && department !== 'all' ? [department] : [])) as any[];
-        const evals = db.prepare(evalsQuery).all(...params) as any[];
+        const agents = await db.prepare(agentsQuery).all(...(department && department !== 'all' ? [department] : [])) as any[];
+        const evals = await db.prepare(evalsQuery).all(...params) as any[];
 
         // 1. Top Performers
         const agentStats = agents.map(agent => {
@@ -948,7 +947,7 @@ async function startServer() {
         const deductions: { [key: string]: { label: string, count: number } } = {};
         
         // We need question labels for better display
-        const questions = db.prepare("SELECT value, label_en FROM form_settings WHERE field_type = 'eval_question'").all() as any[];
+        const questions = await db.prepare("SELECT value, label_en FROM form_settings WHERE field_type = 'eval_question'").all() as any[];
         const questionMap: { [key: string]: string } = {};
         questions.forEach(q => {
           // The ID in responses might be the setting id, let's map by the JSON value or some identifier if possible
@@ -956,7 +955,7 @@ async function startServer() {
         });
         
         // Better way: get all active questions with their IDs
-        const qSettings = db.prepare("SELECT id, label_en FROM form_settings WHERE field_type = 'eval_question'").all() as any[];
+        const qSettings = await db.prepare("SELECT id, label_en FROM form_settings WHERE field_type = 'eval_question'").all() as any[];
         const qIdMap: { [key: string]: string } = {};
         qSettings.forEach(qs => { qIdMap[qs.id.toString()] = qs.label_en; });
 
@@ -965,7 +964,7 @@ async function startServer() {
           try {
             data = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
           } catch (err) {}
-          
+
           if (data && data.responses) {
             Object.keys(data.responses).forEach(qId => {
               if (data.responses[qId] === 'No') {
@@ -1000,20 +999,20 @@ async function startServer() {
     });
 
     // Stats & Analytics
-    app.get("/api/stats/drop-point", (req, res) => {
+    app.get("/api/stats/drop-point", async (req, res) => {
       try {
         const today = new Date().toISOString().split('T')[0];
-        
+
         // Get all evaluations for today
-        const evals = db.prepare(`
-          SELECT e.*, a.display_name as agent_name 
+        const evals = await db.prepare(`
+          SELECT e.*, a.display_name as agent_name
           FROM evaluations e
           JOIN users a ON e.agent_id = a.id
           WHERE e.date = ?
         `).all(today) as any[];
 
         // Get all evaluation questions for mapping
-        const qSettings = db.prepare("SELECT id, label_en FROM form_settings WHERE field_type = 'eval_question'").all() as any[];
+        const qSettings = await db.prepare("SELECT id, label_en FROM form_settings WHERE field_type = 'eval_question'").all() as any[];
         const qIdMap: { [key: string]: string } = {};
         qSettings.forEach(qs => { qIdMap[qs.id.toString()] = qs.label_en; });
 
@@ -1089,7 +1088,7 @@ async function startServer() {
     });
 
     // Stats & Analytics
-    app.get("/api/stats/dashboard", (req, res) => {
+    app.get("/api/stats/dashboard", async (req, res) => {
       try {
         const { user_id, role } = req.query;
         
@@ -1105,8 +1104,8 @@ async function startServer() {
           params.push(user_id);
         }
 
-        const evals = db.prepare(evalsQuery).all(...params) as any[];
-        const agents = db.prepare(agentsQuery).all() as any[];
+        const evals = await db.prepare(evalsQuery).all(...params) as any[];
+        const agents = await db.prepare(agentsQuery).all() as any[];
         
         const avgScore = evals.length > 0 
           ? evals.reduce((acc, curr) => acc + curr.final_score, 0) / evals.length 
@@ -1139,7 +1138,7 @@ async function startServer() {
         let personalPainPoints = [];
         if (role === 'agent') {
           const deductions: { [key: string]: number } = {};
-          const qSettings = db.prepare("SELECT id, label_en FROM form_settings WHERE field_type = 'eval_question'").all() as any[];
+          const qSettings = await db.prepare("SELECT id, label_en FROM form_settings WHERE field_type = 'eval_question'").all() as any[];
           const qIdMap: { [key: string]: string } = {};
           qSettings.forEach(qs => { qIdMap[qs.id.toString()] = qs.label_en; });
 
@@ -1172,7 +1171,7 @@ async function startServer() {
     });
 
     // Advanced Quality Analysis Endpoint / Multi-dimensional metrics
-    app.get("/api/stats/analysis", (req, res) => {
+    app.get("/api/stats/analysis", async (req, res) => {
       try {
         const { start_date, end_date, brand, call_type, agent_id, qa_id, status } = req.query;
 
@@ -1216,11 +1215,11 @@ async function startServer() {
           params.push(status);
         }
 
-        const evals = db.prepare(query).all(...params) as any[];
+        const evals = await db.prepare(query).all(...params) as any[];
 
         // Fetch question dictionary for criteria breakdown
-        const formConfigQuestions = db.prepare("SELECT * FROM form_config").all() as any[];
-        const formSettingsQuestions = db.prepare("SELECT * FROM form_settings WHERE field_type = 'eval_question'").all() as any[];
+        const formConfigQuestions = await db.prepare("SELECT * FROM form_config").all() as any[];
+        const formSettingsQuestions = await db.prepare("SELECT * FROM form_settings WHERE field_type = 'eval_question'").all() as any[];
 
         const qMap: { [key: string]: { label: string; section: string } } = {};
         formConfigQuestions.forEach(q => {
@@ -1404,10 +1403,10 @@ async function startServer() {
         }).sort((a, b) => a.complianceRate - b.complianceRate); // weakest first
 
         // Group filters options for analytics search controls
-        const uniqueBrandsList = db.prepare("SELECT DISTINCT brand FROM evaluations WHERE brand IS NOT NULL AND brand != ''").all().map((r: any) => r.brand);
-        const uniqueTypesList = db.prepare("SELECT DISTINCT call_type FROM evaluations WHERE call_type IS NOT NULL AND call_type != ''").all().map((r: any) => r.call_type);
-        const uniqueAgentsList = db.prepare("SELECT id, display_name FROM users WHERE role = 'agent'").all() as any[];
-        const uniqueQAsList = db.prepare("SELECT id, display_name FROM users WHERE role = 'qa'").all() as any[];
+        const uniqueBrandsList = (await db.prepare("SELECT DISTINCT brand FROM evaluations WHERE brand IS NOT NULL AND brand != ''").all()).map((r: any) => r.brand);
+        const uniqueTypesList = (await db.prepare("SELECT DISTINCT call_type FROM evaluations WHERE call_type IS NOT NULL AND call_type != ''").all()).map((r: any) => r.call_type);
+        const uniqueAgentsList = await db.prepare("SELECT id, display_name FROM users WHERE role = 'agent'").all() as any[];
+        const uniqueQAsList = await db.prepare("SELECT id, display_name FROM users WHERE role = 'qa'").all() as any[];
 
         res.json({
           summary: {
