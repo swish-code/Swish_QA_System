@@ -397,7 +397,7 @@ async function startServer() {
     app.get("/api/evaluations", (req, res) => {
       const { user_id, role, agent_id, from_date, to_date, status, search } = req.query;
       const page = parseInt(req.query.page as string) || 1;
-      const limit = parseInt(req.query.limit as string) || 15;
+      const limit = parseInt(req.query.limit as string) || 10;
       const offset = (page - 1) * limit;
 
       let baseQuery = `
