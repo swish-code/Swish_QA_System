@@ -1,0 +1,16 @@
+# Pin Node 20: several deps (react-router-dom, @vitejs/plugin-react,
+# @tailwindcss/oxide, @google/genai) require Node >= 20.
+[phases.setup]
+nixPkgs = ["nodejs_20", "npm-10_x"]
+
+# Install once during the install phase. The build phase only builds —
+# running `npm ci` again leaves node_modules/.cache locked and crashes
+# with EBUSY on Railway's container layer.
+[phases.install]
+cmds = ["npm ci --no-audit --no-fund"]
+
+[phases.build]
+cmds = ["npm run build"]
+
+[start]
+cmd = "node dist/server.cjs"
