@@ -6,7 +6,15 @@ import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import cors from "cors";
 
-const JWT_SECRET = "super-secret-key-123";
+// JWT signing secret. ALWAYS set JWT_SECRET in production — the fallback below
+// is only there so the dev server still boots on a fresh clone without env vars.
+const JWT_SECRET = process.env.JWT_SECRET || "super-secret-key-123";
+if (process.env.NODE_ENV === "production" && !process.env.JWT_SECRET) {
+  console.warn(
+    "[security] JWT_SECRET is not set in production. Using the fallback dev secret — " +
+    "tokens are guessable. Set JWT_SECRET in your environment."
+  );
+}
 
 async function startServer() {
   const app = express();
@@ -170,12 +178,20 @@ async function startServer() {
       console.error("Migration/Seed error for form_settings:", e);
     }
 
-    // Seed Admin User
+    // Seed Admin User — only runs once when no supervisor exists yet.
+    // Configure the bootstrap password via ADMIN_PASSWORD env var (default: "admin123").
+    // After first login the supervisor should change their password from the UI.
     const adminExists = await db.prepare("SELECT * FROM users WHERE role = 'supervisor'").get();
     if (!adminExists) {
-      const hashedPassword = bcrypt.hashSync("admin123", 10);
+      const bootstrapPassword = process.env.ADMIN_PASSWORD || "admin123";
+      const hashedPassword = bcrypt.hashSync(bootstrapPassword, 10);
       await db.prepare("INSERT INTO users (display_name, username, password, role, department) VALUES (?, ?, ?, ?, ?)")
         .run("Admin Supervisor", "admin", hashedPassword, "supervisor", "Quality");
+      console.log(
+        process.env.ADMIN_PASSWORD
+          ? "[seed] Admin user created with ADMIN_PASSWORD from env."
+          : "[seed] Admin user created with default password 'admin123'. CHANGE IT after first login."
+      );
     }
 
     app.use(cors());
