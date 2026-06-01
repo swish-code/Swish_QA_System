@@ -18,7 +18,9 @@ if (process.env.NODE_ENV === "production" && !process.env.JWT_SECRET) {
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  // Railway / Heroku / Render inject the actual port to listen on via
+  // process.env.PORT. Falling back to 3000 keeps local dev working.
+  const PORT = parseInt(process.env.PORT || "3000", 10);
 
   try {
     const db = createDb();
