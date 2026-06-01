@@ -10,7 +10,16 @@
  * → INSERT ... ON CONFLICT DO NOTHING, datetime('now') → CURRENT_TIMESTAMP,
  * JSON → JSONB, REAL → DOUBLE PRECISION, BOOLEAN coercion for 0/1 columns).
  */
-import { Pool } from "pg";
+import { Pool, types } from "pg";
+
+// node-postgres returns BIGINT (int8) as a string by default because BIGINT
+// can exceed Number.MAX_SAFE_INTEGER. The original code uses better-sqlite3
+// which returns COUNT(*) as a number, so the codebase compares with
+// `=== 0` and does arithmetic on counts. Force int8 -> JS number here so
+// the existing logic keeps working. (Safe for counts; values exceeding
+// 2^53 would lose precision, but row counts in this app never go near
+// that.)
+types.setTypeParser(types.builtins.INT8, (val: string) => parseInt(val, 10));
 
 export interface RunResult {
   lastInsertRowid: number | bigint;
