@@ -374,10 +374,10 @@ export default function AuditList() {
                       </span>
                     </td>
                     <td className="px-8 py-6">
-                      <div className="flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                         <button 
+                      <div className="flex items-center justify-center gap-2">
+                         <button
                            onClick={(e) => { e.stopPropagation(); navigate(`/evaluate/${audit.id}`); }}
-                           className="p-2 rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-zinc-400 hover:text-indigo-600 dark:hover:text-white hover:border-indigo-300 dark:hover:border-zinc-600 transition-all flex items-center gap-2 group/btn"
+                           className="p-2 rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-zinc-500 hover:text-indigo-600 dark:hover:text-white hover:border-indigo-300 dark:hover:border-zinc-600 transition-all"
                            title="View Details"
                          >
                            <Eye size={16} />
@@ -388,15 +388,17 @@ export default function AuditList() {
                                e.stopPropagation();
                                setCoachingTarget(audit);
                              }}
-                             className="p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 hover:bg-emerald-500 hover:text-white transition-all flex items-center gap-2"
+                             className="px-3 py-2 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500 hover:text-white hover:border-emerald-500 transition-all flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest"
                              title="Request Coaching for this call"
                            >
-                             <MessageSquare size={16} />
+                             <MessageSquare size={14} />
+                             <span className="hidden md:inline">Coaching</span>
                            </button>
                          )}
-                         <button 
+                         <button
                            onClick={(e) => e.stopPropagation()}
-                           className="p-2 rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-zinc-400 hover:text-indigo-600 dark:hover:text-white hover:border-indigo-300 dark:hover:border-zinc-600 transition-all"
+                           className="p-2 rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-zinc-500 hover:text-indigo-600 dark:hover:text-white hover:border-indigo-300 dark:hover:border-zinc-600 transition-all"
+                           title="Download"
                          >
                            <Download size={16} />
                          </button>
