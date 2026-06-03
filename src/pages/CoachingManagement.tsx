@@ -1,9 +1,50 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { MessageSquare, Plus, CheckCircle, Clock, Search, ChevronRight, User as UserIcon, Calendar } from 'lucide-react';
+import { MessageSquare, Plus, CheckCircle, Clock, Search, ChevronRight, User as UserIcon, Calendar, Play, AlertCircle, Phone, Tag } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { User, CoachingSession } from '../types';
 import { useSearchParams } from 'react-router-dom';
+
+interface CoachingRequest {
+  id: number;
+  evaluation_id: number;
+  tl_id: number;
+  agent_id: number;
+  customer_phone: string;
+  call_type: string;
+  error_description: string;
+  tl_comment: string;
+  status: 'Pending Employee Approval' | 'Approved' | 'In Progress' | 'Completed';
+  created_at: string;
+  agent_approved_at: string | null;
+  session_started_at: string | null;
+  completed_at: string | null;
+  agent_name: string;
+  tl_name: string;
+  eval_brand: string;
+  eval_score: number;
+  eval_date: string;
+}
+
+function formatDuration(fromIso: string, toIso: string): string {
+  const ms = new Date(toIso).getTime() - new Date(fromIso).getTime();
+  if (!Number.isFinite(ms) || ms < 0) return '—';
+  const mins = Math.round(ms / 60000);
+  if (mins < 60) return `${mins} min`;
+  const hrs = Math.floor(mins / 60);
+  const rem = mins % 60;
+  if (hrs < 24) return rem > 0 ? `${hrs}h ${rem}m` : `${hrs}h`;
+  const days = Math.floor(hrs / 24);
+  const remH = hrs % 24;
+  return remH > 0 ? `${days}d ${remH}h` : `${days}d`;
+}
+
+const STATUS_STYLES: Record<CoachingRequest['status'], string> = {
+  'Pending Employee Approval': 'bg-amber-500/10 border-amber-500/20 text-amber-600 dark:text-amber-400',
+  'Approved': 'bg-indigo-500/10 border-indigo-500/20 text-indigo-600 dark:text-indigo-400',
+  'In Progress': 'bg-blue-500/10 border-blue-500/20 text-blue-600 dark:text-blue-400',
+  'Completed': 'bg-emerald-500/10 border-emerald-500/20 text-emerald-600 dark:text-emerald-400',
+};
 
 export default function CoachingManagement() {
   const { user } = useAuth();
@@ -20,6 +61,10 @@ export default function CoachingManagement() {
     evaluation_id: ''
   });
 
+  // New coaching-requests workflow (per-call requests with approval flow).
+  const [requests, setRequests] = useState<CoachingRequest[]>([]);
+  const [requestActionId, setRequestActionId] = useState<number | null>(null);
+
   const fetchSessions = async () => {
     try {
       const res = await fetch(`/api/coaching?user_id=${user?.id}&role=${user?.role}`);
@@ -33,8 +78,42 @@ export default function CoachingManagement() {
     }
   };
 
+  const fetchRequests = async () => {
+    if (!user?.id || !user?.role) return;
+    try {
+      const res = await fetch(`/api/coaching-requests?user_id=${user.id}&role=${user.role}`);
+      if (!res.ok) throw new Error('Coaching requests fetch failed');
+      const data = await res.json();
+      setRequests(data);
+    } catch (err) {
+      console.error("Error fetching coaching requests:", err);
+    }
+  };
+
+  const performRequestAction = async (id: number, action: 'approve' | 'start' | 'complete') => {
+    setRequestActionId(id);
+    try {
+      const res = await fetch(`/api/coaching-requests/${id}/${action}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: user?.id })
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(j.error || `HTTP ${res.status}`);
+      }
+      await fetchRequests();
+    } catch (err) {
+      console.error(`Coaching request ${action} failed:`, err);
+      alert(`Action failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setRequestActionId(null);
+    }
+  };
+
   useEffect(() => {
     fetchSessions();
+    fetchRequests();
     if (user?.role === 'tl') {
       fetch('/api/users')
         .then(res => {
@@ -86,6 +165,157 @@ export default function CoachingManagement() {
           >
             <Plus size={18} /> New Session
           </button>
+        )}
+      </div>
+
+      {/* === Coaching Requests (new per-call workflow) === */}
+      <div className="space-y-4">
+        <div className="flex items-center gap-4">
+          <div className="w-2 h-8 bg-emerald-500 rounded-full" />
+          <h3 className="text-sm font-black text-zinc-800 dark:text-white uppercase tracking-[0.2em]">
+            Coaching Requests
+          </h3>
+          <span className="text-[10px] font-bold text-zinc-400 dark:text-zinc-500 uppercase tracking-widest">
+            {requests.length} total
+          </span>
+        </div>
+
+        {requests.length === 0 ? (
+          <div className="glass-card p-8 sm:p-12 text-center border border-dashed border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950/20">
+            <MessageSquare className="mx-auto text-zinc-300 dark:text-zinc-700 mb-3" size={36} />
+            <p className="text-zinc-400 dark:text-zinc-600 text-xs font-bold uppercase tracking-widest">
+              {user?.role === 'tl'
+                ? 'No coaching requests yet. Open All Calls and click the Coaching button on any row.'
+                : user?.role === 'agent'
+                  ? 'No coaching requests for you right now.'
+                  : 'No coaching requests in the system.'}
+            </p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {requests.map((r) => {
+              const isAgent = user?.role === 'agent' && Number(user.id) === r.agent_id;
+              const isTl = user?.role === 'tl' && Number(user.id) === r.tl_id;
+              const isBusy = requestActionId === r.id;
+              return (
+                <div
+                  key={r.id}
+                  className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/40 p-4 sm:p-5 shadow-sm flex flex-col gap-3"
+                >
+                  {/* Header row */}
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="shrink-0 w-9 h-9 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-600 dark:text-emerald-400">
+                        <MessageSquare size={16} />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-sm font-black text-zinc-900 dark:text-white truncate">
+                          {r.agent_name}
+                        </p>
+                        <p className="text-[9px] font-bold text-zinc-400 dark:text-zinc-500 uppercase tracking-widest">
+                          Call #{r.evaluation_id} · By {r.tl_name}
+                        </p>
+                      </div>
+                    </div>
+                    <span className={`shrink-0 px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-widest border ${STATUS_STYLES[r.status]}`}>
+                      {r.status}
+                    </span>
+                  </div>
+
+                  {/* Call snapshot */}
+                  <div className="grid grid-cols-3 gap-2 text-[10px]">
+                    <div className="flex items-center gap-1 text-zinc-500 dark:text-zinc-400">
+                      <Phone size={10} /> <span className="truncate">{r.customer_phone || '—'}</span>
+                    </div>
+                    <div className="flex items-center gap-1 text-zinc-500 dark:text-zinc-400">
+                      <Tag size={10} /> <span className="truncate">{r.call_type || '—'}</span>
+                    </div>
+                    <div className="flex items-center gap-1 text-zinc-500 dark:text-zinc-400 col-span-1">
+                      <Calendar size={10} /> <span>{r.eval_score}%</span>
+                    </div>
+                  </div>
+
+                  {r.error_description && (
+                    <div className="flex items-start gap-2 p-2 rounded-lg bg-rose-500/5 border border-rose-500/10 text-[10px] text-rose-700 dark:text-rose-400">
+                      <AlertCircle size={11} className="shrink-0 mt-0.5" />
+                      <span className="line-clamp-2">{r.error_description}</span>
+                    </div>
+                  )}
+
+                  {/* TL comment */}
+                  <div className="p-3 rounded-xl bg-zinc-50 dark:bg-zinc-950 border border-zinc-100 dark:border-zinc-800">
+                    <p className="text-[9px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest mb-1">TL note</p>
+                    <p className="text-xs text-zinc-700 dark:text-zinc-300 whitespace-pre-line line-clamp-4">{r.tl_comment}</p>
+                  </div>
+
+                  {/* Timeline */}
+                  <div className="grid grid-cols-2 gap-2 text-[9px] font-bold text-zinc-400 dark:text-zinc-500 uppercase tracking-widest">
+                    <div>
+                      <span className="block">Created</span>
+                      <span className="text-zinc-700 dark:text-zinc-300 normal-case font-medium">
+                        {new Date(r.created_at).toLocaleString()}
+                      </span>
+                    </div>
+                    {r.agent_approved_at && (
+                      <div>
+                        <span className="block">Agent approved</span>
+                        <span className="text-zinc-700 dark:text-zinc-300 normal-case font-medium">
+                          {new Date(r.agent_approved_at).toLocaleString()}
+                        </span>
+                      </div>
+                    )}
+                    {r.session_started_at && (
+                      <div>
+                        <span className="block">Session started</span>
+                        <span className="text-zinc-700 dark:text-zinc-300 normal-case font-medium">
+                          {new Date(r.session_started_at).toLocaleString()}
+                        </span>
+                      </div>
+                    )}
+                    {r.completed_at && (
+                      <div>
+                        <span className="block">Completed · Duration</span>
+                        <span className="text-emerald-600 dark:text-emerald-400 normal-case font-medium">
+                          {new Date(r.completed_at).toLocaleString()} ({formatDuration(r.created_at, r.completed_at)})
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Action buttons (role-aware) */}
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    {isAgent && r.status === 'Pending Employee Approval' && (
+                      <button
+                        disabled={isBusy}
+                        onClick={() => performRequestAction(r.id, 'approve')}
+                        className="px-4 py-2 rounded-xl bg-emerald-600 text-white font-black text-[10px] uppercase tracking-widest hover:bg-emerald-500 disabled:opacity-60 flex items-center gap-1.5"
+                      >
+                        <CheckCircle size={12} /> Approve
+                      </button>
+                    )}
+                    {isTl && r.status === 'Approved' && (
+                      <button
+                        disabled={isBusy}
+                        onClick={() => performRequestAction(r.id, 'start')}
+                        className="px-4 py-2 rounded-xl bg-blue-600 text-white font-black text-[10px] uppercase tracking-widest hover:bg-blue-500 disabled:opacity-60 flex items-center gap-1.5"
+                      >
+                        <Play size={12} /> Start Session
+                      </button>
+                    )}
+                    {isTl && (r.status === 'Approved' || r.status === 'In Progress') && (
+                      <button
+                        disabled={isBusy}
+                        onClick={() => performRequestAction(r.id, 'complete')}
+                        className="px-4 py-2 rounded-xl bg-indigo-600 text-white font-black text-[10px] uppercase tracking-widest hover:bg-indigo-500 disabled:opacity-60 flex items-center gap-1.5"
+                      >
+                        <CheckCircle size={12} /> Done
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         )}
       </div>
 

@@ -109,6 +109,26 @@ async function startServer() {
       );
     `);
 
+    // New-style coaching workflow (created from a specific call/evaluation).
+    // Lives alongside the old `coaching_sessions` table so the old UI keeps working.
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS coaching_requests (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        evaluation_id INTEGER NOT NULL,
+        tl_id INTEGER NOT NULL,
+        agent_id INTEGER NOT NULL,
+        customer_phone TEXT,
+        call_type TEXT,
+        error_description TEXT,
+        tl_comment TEXT NOT NULL,
+        status TEXT DEFAULT 'Pending Employee Approval',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        agent_approved_at TIMESTAMP,
+        session_started_at TIMESTAMP,
+        completed_at TIMESTAMP
+      );
+    `);
+
     // Table for dynamic Audit Logs / Activity Trail
     await db.exec(`
       CREATE TABLE IF NOT EXISTS audit_logs (
@@ -920,6 +940,246 @@ async function startServer() {
           .run(agent_id, "New Coaching Session", `Your TL has scheduled a coaching session for you.`, evaluation_id || null);
 
         res.json({ success: true, id: coaching_id });
+      } catch (e: any) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    // =====================================================================
+    // Coaching Requests (new workflow tied to a specific evaluation/call)
+    //
+    // Lifecycle:
+    //   TL creates  → 'Pending Employee Approval'  (Agent must accept)
+    //   Agent OK    → 'Approved'                   (waiting for TL to start)
+    //   TL starts   → 'In Progress'                (optional intermediate)
+    //   TL Done     → 'Completed'
+    //
+    // Visibility: Agent sees their own; TL sees ones they raised; QA sees all.
+    // =====================================================================
+
+    async function logCoachingAudit(
+      userId: number | string,
+      userName: string | null,
+      action: string,
+      requestId: number | bigint | string,
+      details: string
+    ) {
+      try {
+        await db.prepare(
+          "INSERT INTO audit_logs (user_id, user_name, action_type, section, details, status) VALUES (?, ?, ?, 'coaching', ?, 'success')"
+        ).run(userId, userName, action, `request_id=${requestId}; ${details}`);
+      } catch {
+        /* logging never throws */
+      }
+    }
+
+    app.post("/api/coaching-requests", async (req, res) => {
+      try {
+        const { evaluation_id, tl_id, tl_comment } = req.body;
+        if (!evaluation_id || !tl_id || !tl_comment?.trim()) {
+          return res.status(400).json({ error: "evaluation_id, tl_id and tl_comment are required" });
+        }
+
+        // Auto-populate from the evaluation: agent, call type, common error.
+        const evalRow = await db.prepare(
+          "SELECT agent_id, call_type, data FROM evaluations WHERE id = ?"
+        ).get(evaluation_id) as any;
+        if (!evalRow) return res.status(404).json({ error: "Evaluation not found" });
+
+        let evalData: any = {};
+        try {
+          evalData = typeof evalRow.data === 'string' ? JSON.parse(evalRow.data) : (evalRow.data || {});
+        } catch {
+          evalData = {};
+        }
+        const customerPhone = evalData?.customer_phone || evalData?.phone || '';
+        const errorDesc = evalData?.feedback?.error_description
+          || evalData?.feedback?.general
+          || (Array.isArray(evalData?.common_issues) ? evalData.common_issues.join(', ') : '')
+          || '';
+
+        const result = await db.prepare(
+          `INSERT INTO coaching_requests
+            (evaluation_id, tl_id, agent_id, customer_phone, call_type, error_description, tl_comment, status)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'Pending Employee Approval')`
+        ).run(evaluation_id, tl_id, evalRow.agent_id, customerPhone, evalRow.call_type, errorDesc, tl_comment.trim());
+
+        const requestId = result.lastInsertRowid;
+
+        // Notify agent.
+        const tl = await db.prepare("SELECT display_name FROM users WHERE id = ?").get(tl_id) as any;
+        await db.prepare(
+          "INSERT INTO notifications (user_id, title, message, evaluation_id) VALUES (?, ?, ?, ?)"
+        ).run(
+          evalRow.agent_id,
+          "Coaching Request Received",
+          `${tl?.display_name || 'Your TL'} requested a coaching session about call #${evaluation_id}.\nReason: ${tl_comment.trim().slice(0, 120)}`,
+          evaluation_id
+        );
+
+        await logCoachingAudit(tl_id, tl?.display_name || null, 'coaching_request_created', requestId, `evaluation_id=${evaluation_id}; agent_id=${evalRow.agent_id}`);
+
+        res.json({ success: true, id: requestId });
+      } catch (e: any) {
+        console.error('coaching-requests POST error:', e);
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    app.get("/api/coaching-requests", async (req, res) => {
+      try {
+        const { user_id, role, status } = req.query;
+        let query = `
+          SELECT cr.*,
+                 a.display_name AS agent_name,
+                 t.display_name AS tl_name,
+                 e.brand        AS eval_brand,
+                 e.final_score  AS eval_score,
+                 e.date         AS eval_date
+          FROM coaching_requests cr
+          JOIN users a       ON cr.agent_id = a.id
+          JOIN users t       ON cr.tl_id    = t.id
+          JOIN evaluations e ON cr.evaluation_id = e.id
+          WHERE 1=1
+        `;
+        const params: any[] = [];
+
+        if (role === 'agent') {
+          query += " AND cr.agent_id = ?";
+          params.push(user_id);
+        } else if (role === 'tl') {
+          query += " AND cr.tl_id = ?";
+          params.push(user_id);
+        }
+        // qa / supervisor: unrestricted
+
+        if (status && status !== 'all') {
+          query += " AND cr.status = ?";
+          params.push(status);
+        }
+
+        query += " ORDER BY cr.created_at DESC";
+        const rows = await db.prepare(query).all(...params);
+        res.json(rows);
+      } catch (e: any) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    app.get("/api/coaching-requests/:id", async (req, res) => {
+      try {
+        const row = await db.prepare(`
+          SELECT cr.*,
+                 a.display_name AS agent_name,
+                 t.display_name AS tl_name,
+                 e.brand AS eval_brand, e.final_score AS eval_score, e.date AS eval_date
+          FROM coaching_requests cr
+          JOIN users a       ON cr.agent_id = a.id
+          JOIN users t       ON cr.tl_id    = t.id
+          JOIN evaluations e ON cr.evaluation_id = e.id
+          WHERE cr.id = ?
+        `).get(req.params.id);
+        if (!row) return res.status(404).json({ error: "Not found" });
+        res.json(row);
+      } catch (e: any) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    // Agent accepts the coaching request.
+    app.post("/api/coaching-requests/:id/approve", async (req, res) => {
+      try {
+        const { user_id } = req.body;
+        const id = req.params.id;
+        const row = await db.prepare("SELECT agent_id, tl_id, status FROM coaching_requests WHERE id = ?").get(id) as any;
+        if (!row) return res.status(404).json({ error: "Not found" });
+        if (String(row.agent_id) !== String(user_id)) {
+          return res.status(403).json({ error: "Only the assigned agent can approve this request" });
+        }
+        if (row.status !== 'Pending Employee Approval') {
+          return res.status(400).json({ error: `Cannot approve in state "${row.status}"` });
+        }
+
+        await db.prepare(
+          "UPDATE coaching_requests SET status = 'Approved', agent_approved_at = CURRENT_TIMESTAMP WHERE id = ?"
+        ).run(id);
+
+        const agent = await db.prepare("SELECT display_name FROM users WHERE id = ?").get(user_id) as any;
+        await db.prepare(
+          "INSERT INTO notifications (user_id, title, message, evaluation_id) VALUES (?, ?, ?, ?)"
+        ).run(
+          row.tl_id,
+          "Coaching Request Approved",
+          `${agent?.display_name || 'The agent'} approved coaching request #${id}. You can start the session.`,
+          null
+        );
+
+        await logCoachingAudit(user_id, agent?.display_name || null, 'coaching_agent_approved', id, '');
+
+        res.json({ success: true, status: 'Approved' });
+      } catch (e: any) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    // TL starts the actual coaching session.
+    app.post("/api/coaching-requests/:id/start", async (req, res) => {
+      try {
+        const { user_id } = req.body;
+        const id = req.params.id;
+        const row = await db.prepare("SELECT tl_id, status FROM coaching_requests WHERE id = ?").get(id) as any;
+        if (!row) return res.status(404).json({ error: "Not found" });
+        if (String(row.tl_id) !== String(user_id)) {
+          return res.status(403).json({ error: "Only the TL who created this can start it" });
+        }
+        if (row.status !== 'Approved') {
+          return res.status(400).json({ error: `Cannot start from state "${row.status}"` });
+        }
+
+        await db.prepare(
+          "UPDATE coaching_requests SET status = 'In Progress', session_started_at = CURRENT_TIMESTAMP WHERE id = ?"
+        ).run(id);
+
+        const tl = await db.prepare("SELECT display_name FROM users WHERE id = ?").get(user_id) as any;
+        await logCoachingAudit(user_id, tl?.display_name || null, 'coaching_session_started', id, '');
+
+        res.json({ success: true, status: 'In Progress' });
+      } catch (e: any) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    // TL marks the session complete.
+    app.post("/api/coaching-requests/:id/complete", async (req, res) => {
+      try {
+        const { user_id } = req.body;
+        const id = req.params.id;
+        const row = await db.prepare("SELECT tl_id, agent_id, status FROM coaching_requests WHERE id = ?").get(id) as any;
+        if (!row) return res.status(404).json({ error: "Not found" });
+        if (String(row.tl_id) !== String(user_id)) {
+          return res.status(403).json({ error: "Only the TL who created this can complete it" });
+        }
+        if (row.status !== 'Approved' && row.status !== 'In Progress') {
+          return res.status(400).json({ error: `Cannot complete from state "${row.status}"` });
+        }
+
+        await db.prepare(
+          "UPDATE coaching_requests SET status = 'Completed', completed_at = CURRENT_TIMESTAMP WHERE id = ?"
+        ).run(id);
+
+        const tl = await db.prepare("SELECT display_name FROM users WHERE id = ?").get(user_id) as any;
+        await db.prepare(
+          "INSERT INTO notifications (user_id, title, message, evaluation_id) VALUES (?, ?, ?, ?)"
+        ).run(
+          row.agent_id,
+          "Coaching Session Completed",
+          `${tl?.display_name || 'Your TL'} marked coaching request #${id} as completed.`,
+          null
+        );
+
+        await logCoachingAudit(user_id, tl?.display_name || null, 'coaching_completed', id, '');
+
+        res.json({ success: true, status: 'Completed' });
       } catch (e: any) {
         res.status(500).json({ error: e.message });
       }

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import CoachingRequestDialog from '../components/CoachingRequestDialog';
 import { useAuth } from '../context/AuthContext';
 import { 
   Search, 
@@ -48,6 +49,9 @@ export default function AuditList() {
   
   const [isLoading, setIsLoading] = useState(true);
   const [isChangingPage, setIsChangingPage] = useState(false);
+
+  // Evaluation row the TL clicked "Coaching" on — opens the request dialog.
+  const [coachingTarget, setCoachingTarget] = useState<Evaluation | null>(null);
 
   const fetchEvaluations = useCallback(async (params: URLSearchParams) => {
     setIsChangingPage(true);
@@ -379,13 +383,13 @@ export default function AuditList() {
                            <Eye size={16} />
                          </button>
                          {user?.role === 'tl' && (
-                           <button 
-                             onClick={(e) => { 
-                               e.stopPropagation(); 
-                               navigate(`/coaching?agent_id=${audit.agent_id}&evaluation_id=${audit.id}`); 
+                           <button
+                             onClick={(e) => {
+                               e.stopPropagation();
+                               setCoachingTarget(audit);
                              }}
                              className="p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 hover:bg-emerald-500 hover:text-white transition-all flex items-center gap-2"
-                             title="Start Coaching"
+                             title="Request Coaching for this call"
                            >
                              <MessageSquare size={16} />
                            </button>
@@ -502,6 +506,15 @@ export default function AuditList() {
           </div>
         )}
       </div>
+
+      {coachingTarget && user?.id && (
+        <CoachingRequestDialog
+          evaluation={coachingTarget}
+          tlId={user.id}
+          onClose={() => setCoachingTarget(null)}
+          onSubmitted={() => setCoachingTarget(null)}
+        />
+      )}
     </div>
   );
 }
