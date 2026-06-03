@@ -51,6 +51,7 @@ export default function EvaluationForm() {
     call_direction: '',
     call_category: '',
     call_duration: '',
+    customer_phone: '',
     date: new Date().toISOString().split('T')[0],
     responses: {},
     common_issues: [],
@@ -526,9 +527,23 @@ export default function EvaluationForm() {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6 lg:gap-8">
+          <div className="space-y-3 md:col-span-3">
+            <label className="text-[9px] font-black text-zinc-400 dark:text-zinc-600 uppercase tracking-widest block">
+              Customer Phone Number <span className="text-rose-500">*</span>
+            </label>
+            <input
+              type="tel"
+              inputMode="tel"
+              placeholder="e.g. +965 9999 9999"
+              value={formData.customer_phone}
+              disabled={isReadOnly}
+              onChange={(e) => setFormData({ ...formData, customer_phone: e.target.value })}
+              className="w-full bg-white dark:bg-zinc-900 border border-zinc-100 dark:border-zinc-800 rounded-xl px-4 py-3 text-xs text-zinc-800 dark:text-white outline-none placeholder:text-zinc-300 dark:placeholder:text-zinc-700 focus:border-indigo-500 dark:focus:border-emerald-500"
+            />
+          </div>
           <div className="space-y-3">
             <label className="text-[9px] font-black text-zinc-400 dark:text-zinc-600 uppercase tracking-widest block">Brand</label>
-            <select 
+            <select
               value={formData.brand}
               disabled={isReadOnly}
               onChange={(e) => setFormData({...formData, brand: e.target.value})}
