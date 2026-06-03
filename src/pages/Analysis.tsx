@@ -191,11 +191,16 @@ export default function Analysis() {
   const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#f43f5e', '#a855f7', '#06b6d4'];
   const STATUS_COLORS: { [key: string]: string } = {
     'Completed': '#10b981',
+    'Sent to Agent': '#10b981',
     'Pending Review': '#f59e0b',
     'Pending TL Response': '#a855f7',
     'Approved': '#6366f1',
+    'Quality Approved': '#6366f1',
     'Reevaluation Requested': '#3b82f6',
-    'Escalated': '#f43f5e'
+    'Reevaluated': '#3b82f6',
+    'Escalated': '#f43f5e',
+    'Rejected by Quality': '#dc2626',
+    'Reevaluation Rejected': '#dc2626'
   };
 
   // Filter lists based on inside search strings

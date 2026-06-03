@@ -31,7 +31,15 @@ export interface Evaluation {
   brand: string;
   call_type: string;
   final_score: number;
-  status: 'Pending Review' | 'Approved' | 'Escalated' | 'Reevaluated' | 'Reevaluation Rejected' | 'Sent to Agent';
+  status:
+    | 'Pending Review'        // score < 90 — waiting for TL to approve / escalate. Hidden from Agent.
+    | 'Sent to Agent'          // score ≥ 90 auto, or TL approved a low-score one. Visible to Agent.
+    | 'Escalated'              // TL escalated back to Quality. Hidden from Agent.
+    | 'Quality Approved'       // QA approved after a TL escalation. Visible to Agent.
+    | 'Rejected by Quality'    // QA rejected after a TL escalation. Visible to Agent.
+    | 'Approved'               // legacy — kept for old rows.
+    | 'Reevaluated'            // legacy — kept for old rows.
+    | 'Reevaluation Rejected'; // legacy — kept for old rows.
   critical_failure: boolean;
   data: Record<string, any>;
 }

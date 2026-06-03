@@ -426,12 +426,20 @@ async function startServer() {
       let params: any[] = [];
 
       if (role === 'agent') {
-        baseQuery += " AND e.agent_id = ?";
+        // Agent only sees evaluations that completed the approval cycle:
+        //   - Auto-approved (score ≥ 90 on creation)              → 'Sent to Agent'
+        //   - TL approved a < 90 score                            → 'Sent to Agent'
+        //   - Quality approved/rejected after a TL escalation     → 'Quality Approved' / 'Rejected by Quality'
+        // Evaluations in 'Pending Review' or 'Escalated' are hidden from the Agent
+        // because the cycle hasn't finished yet.
+        baseQuery += " AND e.agent_id = ? AND e.status IN ('Sent to Agent', 'Quality Approved', 'Rejected by Quality')";
         params.push(user_id);
       } else if (role === 'tl') {
-        baseQuery += " AND (a.tl_id = ? OR e.qa_id = ?)";
-        params.push(user_id, user_id);
+        // TL only sees evaluations belonging to their direct team.
+        baseQuery += " AND a.tl_id = ?";
+        params.push(user_id);
       }
+      // qa & supervisor: no additional filter — they see every evaluation in every state.
 
       if (agent_id && agent_id !== 'all') {
         baseQuery += " AND e.agent_id = ?";
@@ -495,8 +503,10 @@ async function startServer() {
     app.post("/api/evaluations", async (req, res) => {
       const { date, agent_id, qa_id, brand, call_type, final_score, critical_failure, data } = req.body;
 
-      // Determine initial status based on score
-      const status = final_score === 100 ? 'Sent to Agent' : 'Pending Review';
+      // Workflow rule:
+      //   score >= 90  → goes straight to Agent + TL (no approval needed)
+      //   score <  90  → goes to TL only; Agent does NOT see it until cycle ends
+      const status = final_score >= 90 ? 'Sent to Agent' : 'Pending Review';
 
       const result = await db.prepare("INSERT INTO evaluations (date, agent_id, qa_id, brand, call_type, final_score, critical_failure, data, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
         .run(date, agent_id, qa_id, brand, call_type, final_score, critical_failure ? 1 : 0, JSON.stringify(data), status);
@@ -517,24 +527,21 @@ async function startServer() {
         Time: ${timestamp}
       `.trim();
 
-      // Notification logic
       if (status === 'Sent to Agent') {
-        // Notify Agent
+        // High score (>= 90): both Agent and TL get notified, no approvals needed.
         await db.prepare("INSERT INTO notifications (user_id, title, message, evaluation_id) VALUES (?, ?, ?, ?)")
           .run(agent_id, "New Evaluation Received", notificationMsg, evaluation_id);
-      } else {
-        // Notify TL if evaluation needs review
-        if (agent && agent.tl_id) {
+        if (agent?.tl_id) {
           await db.prepare("INSERT INTO notifications (user_id, title, message, evaluation_id) VALUES (?, ?, ?, ?)")
-            .run(agent.tl_id, "Evaluation Pending Review", notificationMsg, evaluation_id);
+            .run(agent.tl_id, "New Evaluation (Score ≥ 90%)", notificationMsg, evaluation_id);
         }
-      }
-
-      // Always notify the agent that an evaluation was performed (even if pending review, maybe?
-      // User said: "Whenever Quality Team submits, a notification should automatically be sent to: The Team Leader AND the employee")
-      if (status !== 'Sent to Agent') {
-         await db.prepare("INSERT INTO notifications (user_id, title, message, evaluation_id) VALUES (?, ?, ?, ?)")
-           .run(agent_id, "Call Evaluated (Awaiting Review)", notificationMsg, evaluation_id);
+      } else {
+        // Low score (< 90): only TL is notified; Agent is intentionally NOT notified
+        // and the evaluation is hidden from them until the approval cycle finishes.
+        if (agent?.tl_id) {
+          await db.prepare("INSERT INTO notifications (user_id, title, message, evaluation_id) VALUES (?, ?, ?, ?)")
+            .run(agent.tl_id, "Evaluation Pending Review (Score < 90%)", notificationMsg, evaluation_id);
+        }
       }
 
       res.json({ success: true, id: evaluation_id });
@@ -561,17 +568,33 @@ async function startServer() {
 
       const newStatus = action === 'approved' ? 'Sent to Agent' : 'Escalated';
 
+      // Look up TL identity so the audit trail and notifications carry a human name + timestamp.
+      const tl = await db.prepare("SELECT display_name FROM users WHERE id = ?").get(user_id) as any;
+      const tlName = tl?.display_name || `TL #${user_id}`;
+      const actionTime = new Date().toLocaleString();
+
       await db.prepare("UPDATE evaluations SET status = ? WHERE id = ?").run(newStatus, evaluation_id);
       await db.prepare("INSERT INTO escalation_logs (evaluation_id, user_id, role, action, comment, old_score, new_score) VALUES (?, ?, 'tl', ?, ?, ?, ?)")
         .run(evaluation_id, user_id, action, comment, evaluation.final_score, evaluation.final_score);
 
-      // Notifications
       if (action === 'approved') {
+        // Notify the Agent — they now see the evaluation in their list.
         await db.prepare("INSERT INTO notifications (user_id, title, message, evaluation_id) VALUES (?, ?, ?, ?)")
-          .run(evaluation.agent_id, "Evaluation Approved", `Your evaluation has been approved by your TL. Score: ${evaluation.final_score}%`, evaluation_id);
+          .run(
+            evaluation.agent_id,
+            "Evaluation Approved",
+            `Approved by ${tlName} on ${actionTime}. Score: ${evaluation.final_score}%`,
+            evaluation_id
+          );
       } else {
+        // Escalation: ping the Quality auditor who created the evaluation.
         await db.prepare("INSERT INTO notifications (user_id, title, message, evaluation_id) VALUES (?, ?, ?, ?)")
-          .run(evaluation.qa_id, "Evaluation Escalated", `Evaluation ${evaluation_id} has been escalated by TL. Reason: ${comment}`, evaluation_id);
+          .run(
+            evaluation.qa_id,
+            "Evaluation Escalated by TL",
+            `${tlName} escalated evaluation #${evaluation_id} on ${actionTime}.\nReason: ${comment || '(no comment)'}`,
+            evaluation_id
+          );
       }
 
       res.json({ success: true, status: newStatus });
@@ -626,6 +649,7 @@ async function startServer() {
       if (role === 'tl') {
         newStatus = action === 'approved' ? 'Sent to Agent' : 'Escalated';
       } else {
+        // QA acting on a previously-escalated evaluation.
         newStatus = action === 'approved' ? 'Quality Approved' : 'Rejected by Quality';
       }
 
@@ -633,7 +657,38 @@ async function startServer() {
       await db.prepare("INSERT INTO escalation_logs (evaluation_id, user_id, role, action, comment, old_score, new_score) VALUES (?, ?, ?, ?, ?, ?, ?)")
         .run(evaluation_id, user_id, role, action, comment, old_score ?? evaluation.final_score, new_score ?? evaluation.final_score);
 
-      res.json({ success: true });
+      // Notify everyone affected so the new state is visible without a refresh.
+      const actor = await db.prepare("SELECT display_name FROM users WHERE id = ?").get(user_id) as any;
+      const actorName = actor?.display_name || `User #${user_id}`;
+      const actionTime = new Date().toLocaleString();
+      const agentMsg = `${actorName} marked your evaluation as "${newStatus}" on ${actionTime}.\nNote: ${comment || '(none)'}`;
+
+      // Both 'Sent to Agent' and 'Quality Approved' / 'Rejected by Quality' are terminal
+      // states that the Agent is allowed to see, so notify them in all three cases.
+      if (newStatus === 'Sent to Agent' || newStatus === 'Quality Approved' || newStatus === 'Rejected by Quality') {
+        await db.prepare("INSERT INTO notifications (user_id, title, message, evaluation_id) VALUES (?, ?, ?, ?)")
+          .run(evaluation.agent_id, `Evaluation ${newStatus}`, agentMsg, evaluation_id);
+
+        // Also keep the TL in the loop on QA-side decisions.
+        if (role === 'qa') {
+          const ag = await db.prepare("SELECT tl_id FROM users WHERE id = ?").get(evaluation.agent_id) as any;
+          if (ag?.tl_id) {
+            await db.prepare("INSERT INTO notifications (user_id, title, message, evaluation_id) VALUES (?, ?, ?, ?)")
+              .run(ag.tl_id, `Evaluation ${newStatus}`, `Quality decided "${newStatus}" on evaluation #${evaluation_id} (${actionTime}).`, evaluation_id);
+          }
+        }
+      } else if (newStatus === 'Escalated') {
+        // TL re-escalated → re-notify the QA owner.
+        await db.prepare("INSERT INTO notifications (user_id, title, message, evaluation_id) VALUES (?, ?, ?, ?)")
+          .run(
+            evaluation.qa_id,
+            "Evaluation Escalated by TL",
+            `${actorName} escalated evaluation #${evaluation_id} on ${actionTime}.\nReason: ${comment || '(no comment)'}`,
+            evaluation_id
+          );
+      }
+
+      res.json({ success: true, status: newStatus });
     });
 
     // Form Settings APIs
