@@ -13,4 +13,7 @@ cmds = ["npm ci --no-audit --no-fund"]
 cmds = ["npm run build"]
 
 [start]
-cmd = "node dist/server.cjs"
+# NODE_ENV=production forces server.ts to skip Vite dev middleware and
+# serve the prebuilt SPA from dist/ — otherwise Vite blocks every request
+# with "Blocked request. This host is not allowed." on the Railway URL.
+cmd = "NODE_ENV=production node dist/server.cjs"

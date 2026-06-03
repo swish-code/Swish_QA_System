@@ -17,8 +17,13 @@ export default defineConfig(({mode}) => {
     },
     server: {
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
-      // Do not modifyâfile watching is disabled to prevent flickering during agent edits.
+      // File watching is disabled to prevent flickering during agent edits.
       hmr: process.env.DISABLE_HMR !== 'true',
+      // Vite 6 blocks unknown hosts in dev. When this middleware accidentally
+      // runs behind a public URL (e.g. NODE_ENV missing on Railway), every
+      // request returns "Blocked request. This host is not allowed."
+      // Allow all hosts so the dev fallback actually responds.
+      allowedHosts: true,
     },
   };
 });

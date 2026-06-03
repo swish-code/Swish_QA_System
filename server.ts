@@ -1775,19 +1775,36 @@ async function startServer() {
       res.status(500).json({ error: "Internal Server Error", message: err.message });
     });
 
-    // Vite middleware for development
-    if (process.env.NODE_ENV !== "production") {
+    // Decide between Vite dev middleware and serving the prebuilt SPA.
+    //
+    // Production signals (any of these is enough):
+    //   - NODE_ENV === 'production'
+    //   - Running on Railway (Railway sets RAILWAY_ENVIRONMENT)
+    //   - A prebuilt SPA exists at ./dist/index.html
+    //
+    // If none of those hold, fall back to the Vite middleware so local
+    // `npm run dev` keeps working with HMR.
+    const distPath = path.join(process.cwd(), "dist");
+    const hasBuiltSpa = (() => {
+      try { return require("fs").existsSync(path.join(distPath, "index.html")); }
+      catch { return false; }
+    })();
+    const isProd =
+      process.env.NODE_ENV === "production" ||
+      !!process.env.RAILWAY_ENVIRONMENT ||
+      hasBuiltSpa;
+
+    if (isProd) {
+      app.use(express.static(distPath));
+      app.get("*", (req, res) => {
+        res.sendFile(path.join(distPath, "index.html"));
+      });
+    } else {
       const vite = await createViteServer({
         server: { middlewareMode: true },
         appType: "spa",
       });
       app.use(vite.middlewares);
-    } else {
-      const distPath = path.join(process.cwd(), "dist");
-      app.use(express.static(distPath));
-      app.get("*", (req, res) => {
-        res.sendFile(path.join(distPath, "index.html"));
-      });
     }
 
     app.listen(PORT, "0.0.0.0", () => {
