@@ -2,6 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import Sidebar from './Sidebar';
 import NotificationBell from './NotificationBell';
 import ThemeToggle from './ThemeToggle';
+import DraftsButton from './DraftsButton';
+import DraftsPanel from './DraftsPanel';
 import { useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { User, LogOut, Menu } from 'lucide-react';
@@ -42,6 +44,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           <div className="flex items-center gap-2 sm:gap-6 shrink-0">
             <div className="flex items-center gap-2 sm:gap-3">
               <ThemeToggle />
+              <DraftsButton />
               <NotificationBell />
             </div>
 
@@ -71,6 +74,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           {children}
         </div>
       </main>
+
+      {/* Right-side drafts panel; renders to body via portal */}
+      <DraftsPanel />
     </div>
   );
 }

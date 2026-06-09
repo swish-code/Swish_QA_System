@@ -129,6 +129,29 @@ async function startServer() {
       );
     `);
 
+    // Draft Management — saved-but-not-submitted evaluations.
+    // owner_id  → the QA who saved it (visible to them + supervisors)
+    // data      → JSON snapshot of the entire form (responses, feedback, etc.)
+    // title     → auto-generated label shown in the side panel
+    // status    → 'draft' | 'completed' (set to 'completed' once an evaluation
+    //              is submitted from this draft, so we keep an audit trail
+    //              instead of hard-deleting; the panel only lists 'draft' rows)
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS evaluation_drafts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        owner_id INTEGER NOT NULL,
+        agent_id INTEGER,
+        brand TEXT,
+        call_type TEXT,
+        title TEXT,
+        data JSON,
+        status TEXT DEFAULT 'draft',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        completed_at TIMESTAMP
+      );
+    `);
+
     // Table for dynamic Audit Logs / Activity Trail
     await db.exec(`
       CREATE TABLE IF NOT EXISTS audit_logs (
@@ -346,6 +369,30 @@ async function startServer() {
             section = 'Coaching';
             actionType = 'CREATE_COACHING';
             details = `Created new coaching session for Agent ID ${req.body.agent_id} by TL ID ${req.body.tl_id}`;
+          } else if (parsedUrl === '/api/drafts' && method === 'POST') {
+            section = 'Drafts';
+            actionType = 'CREATE_DRAFT';
+            details = `Saved evaluation as draft for Agent ID ${req.body.agent_id || 'N/A'} (Brand: ${req.body.brand || 'N/A'}, Call Type: ${req.body.call_type || 'N/A'})`;
+          } else if (parsedUrl.startsWith('/api/drafts/') && method === 'PUT') {
+            section = 'Drafts';
+            actionType = 'UPDATE_DRAFT';
+            const draftId = parsedUrl.split('/')[3];
+            details = `Updated draft ID ${draftId} (Agent ID ${req.body.agent_id || 'N/A'}, Brand: ${req.body.brand || 'N/A'})`;
+          } else if (parsedUrl.startsWith('/api/drafts/') && method === 'DELETE') {
+            section = 'Drafts';
+            actionType = 'DELETE_DRAFT';
+            const draftId = parsedUrl.split('/')[3];
+            details = `Deleted draft ID ${draftId}`;
+          } else if (parsedUrl === '/api/drafts' && method === 'DELETE') {
+            section = 'Drafts';
+            actionType = 'CLEAR_ALL_DRAFTS';
+            const deletedCount = capturedBody?.deleted ?? 'unknown';
+            details = `Cleared all drafts (${deletedCount} removed)`;
+          } else if (parsedUrl.startsWith('/api/drafts/') && method === 'GET' && capturedBody?.id) {
+            section = 'Drafts';
+            actionType = 'RESTORE_DRAFT';
+            const draftId = parsedUrl.split('/')[3];
+            details = `Restored draft ID ${draftId} for editing`;
           } else if (parsedUrl.includes('/read')) {
             section = 'Notifications';
             actionType = 'READ_NOTIFICATION';
@@ -521,7 +568,7 @@ async function startServer() {
     });
 
     app.post("/api/evaluations", async (req, res) => {
-      const { date, agent_id, qa_id, brand, call_type, final_score, critical_failure, data } = req.body;
+      const { date, agent_id, qa_id, brand, call_type, final_score, critical_failure, data, draft_id } = req.body;
 
       // Workflow rule:
       //   score >= 90  → goes straight to Agent + TL (no approval needed)
@@ -532,6 +579,20 @@ async function startServer() {
         .run(date, agent_id, qa_id, brand, call_type, final_score, critical_failure ? 1 : 0, JSON.stringify(data), status);
 
       const evaluation_id = result.lastInsertRowid;
+
+      // If this evaluation came from a draft, mark the draft as completed
+      // instead of hard-deleting it — that way Activity Log keeps the trail.
+      if (draft_id) {
+        try {
+          await db.prepare(`
+            UPDATE evaluation_drafts
+            SET status = 'completed', completed_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND owner_id = ?
+          `).run(draft_id, qa_id);
+        } catch (err) {
+          console.error("Failed to mark draft as completed:", err);
+        }
+      }
 
       // Extract details for richer notification
       const agent = await db.prepare("SELECT display_name, tl_id FROM users WHERE id = ?").get(agent_id) as any;
@@ -732,6 +793,187 @@ async function startServer() {
     app.delete("/api/settings/form/:id", async (req, res) => {
       await db.prepare("DELETE FROM form_settings WHERE id = ?").run(req.params.id);
       res.json({ success: true });
+    });
+
+    // -----------------------------------------------------------------
+    // Draft Management
+    //   - QAs save in-progress evaluations as drafts and resume later.
+    //   - The owner sees their own drafts; supervisors see everyone's.
+    //   - Visibility rule:
+    //       role === 'supervisor'  →  all drafts
+    //       any other role         →  only drafts where owner_id = user_id
+    // -----------------------------------------------------------------
+    const buildDraftTitle = (data: any, agentName?: string) => {
+      const parts: string[] = [];
+      if (agentName) parts.push(agentName);
+      if (data?.brand) parts.push(data.brand);
+      if (data?.call_type) parts.push(data.call_type);
+      return parts.length ? parts.join(' • ') : 'Untitled draft';
+    };
+
+    // List drafts. Always filters out 'completed' rows — those are kept
+    // for the audit trail but should never appear in the side panel.
+    app.get("/api/drafts", async (req, res) => {
+      try {
+        const { user_id, role } = req.query;
+        if (!user_id) return res.status(400).json({ error: "user_id is required" });
+
+        let query = `
+          SELECT d.id, d.owner_id, d.agent_id, d.brand, d.call_type, d.title,
+                 d.data, d.status, d.created_at, d.updated_at,
+                 o.display_name AS owner_name,
+                 a.display_name AS agent_name
+          FROM evaluation_drafts d
+          LEFT JOIN users o ON d.owner_id = o.id
+          LEFT JOIN users a ON d.agent_id = a.id
+          WHERE d.status = 'draft'
+        `;
+        const params: any[] = [];
+        if (role !== 'supervisor') {
+          query += " AND d.owner_id = ?";
+          params.push(user_id);
+        }
+        query += " ORDER BY d.updated_at DESC";
+
+        const rows = await db.prepare(query).all(...params) as any[];
+
+        // Parse `data` so the client doesn't have to.
+        const drafts = rows.map(r => {
+          let parsed: any = null;
+          try { parsed = typeof r.data === 'string' ? JSON.parse(r.data) : r.data; } catch {}
+          return { ...r, data: parsed };
+        });
+
+        res.json({ count: drafts.length, drafts });
+      } catch (e: any) {
+        console.error("/api/drafts GET failed:", e);
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    // Fetch a single draft. Same visibility rules as list.
+    app.get("/api/drafts/:id", async (req, res) => {
+      try {
+        const { user_id, role } = req.query;
+        const draftId = req.params.id;
+        const row = await db.prepare(`
+          SELECT d.*, o.display_name AS owner_name, a.display_name AS agent_name
+          FROM evaluation_drafts d
+          LEFT JOIN users o ON d.owner_id = o.id
+          LEFT JOIN users a ON d.agent_id = a.id
+          WHERE d.id = ?
+        `).get(draftId) as any;
+        if (!row) return res.status(404).json({ error: "Draft not found" });
+        if (row.status !== 'draft') return res.status(410).json({ error: "Draft was completed or deleted" });
+        if (role !== 'supervisor' && String(row.owner_id) !== String(user_id)) {
+          return res.status(403).json({ error: "Forbidden" });
+        }
+        let parsed: any = null;
+        try { parsed = typeof row.data === 'string' ? JSON.parse(row.data) : row.data; } catch {}
+        res.json({ ...row, data: parsed });
+      } catch (e: any) {
+        console.error("/api/drafts/:id GET failed:", e);
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    // Create a new draft. Only the owner can create.
+    app.post("/api/drafts", async (req, res) => {
+      try {
+        const { owner_id, agent_id, brand, call_type, data } = req.body;
+        if (!owner_id) return res.status(400).json({ error: "owner_id is required" });
+
+        let agentName: string | undefined;
+        if (agent_id) {
+          const a = await db.prepare("SELECT display_name FROM users WHERE id = ?").get(agent_id) as any;
+          agentName = a?.display_name;
+        }
+        const title = buildDraftTitle({ brand, call_type }, agentName);
+
+        const result = await db.prepare(`
+          INSERT INTO evaluation_drafts (owner_id, agent_id, brand, call_type, title, data, status, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, 'draft', CURRENT_TIMESTAMP)
+        `).run(owner_id, agent_id || null, brand || null, call_type || null, title, JSON.stringify(data || {}));
+
+        res.json({ success: true, id: result.lastInsertRowid, title });
+      } catch (e: any) {
+        console.error("/api/drafts POST failed:", e);
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    // Update an existing draft. Only the owner (or supervisor) can update.
+    app.put("/api/drafts/:id", async (req, res) => {
+      try {
+        const { user_id, role, agent_id, brand, call_type, data } = req.body;
+        const draftId = req.params.id;
+
+        const existing = await db.prepare("SELECT owner_id, status FROM evaluation_drafts WHERE id = ?").get(draftId) as any;
+        if (!existing) return res.status(404).json({ error: "Draft not found" });
+        if (existing.status !== 'draft') return res.status(410).json({ error: "Draft was completed" });
+        if (role !== 'supervisor' && String(existing.owner_id) !== String(user_id)) {
+          return res.status(403).json({ error: "Forbidden" });
+        }
+
+        let agentName: string | undefined;
+        if (agent_id) {
+          const a = await db.prepare("SELECT display_name FROM users WHERE id = ?").get(agent_id) as any;
+          agentName = a?.display_name;
+        }
+        const title = buildDraftTitle({ brand, call_type }, agentName);
+
+        await db.prepare(`
+          UPDATE evaluation_drafts
+          SET agent_id = ?, brand = ?, call_type = ?, title = ?, data = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `).run(agent_id || null, brand || null, call_type || null, title, JSON.stringify(data || {}), draftId);
+
+        res.json({ success: true, title });
+      } catch (e: any) {
+        console.error("/api/drafts PUT failed:", e);
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    // Delete one. user_id/role come from the query string so the audit
+    // middleware can attribute the action correctly.
+    app.delete("/api/drafts/:id", async (req, res) => {
+      try {
+        const { user_id, role } = req.query;
+        const draftId = req.params.id;
+
+        const existing = await db.prepare("SELECT owner_id FROM evaluation_drafts WHERE id = ?").get(draftId) as any;
+        if (!existing) return res.status(404).json({ error: "Draft not found" });
+        if (role !== 'supervisor' && String(existing.owner_id) !== String(user_id)) {
+          return res.status(403).json({ error: "Forbidden" });
+        }
+
+        await db.prepare("DELETE FROM evaluation_drafts WHERE id = ?").run(draftId);
+        res.json({ success: true });
+      } catch (e: any) {
+        console.error("/api/drafts/:id DELETE failed:", e);
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    // Clear all drafts for the caller (or every QA's drafts, if supervisor).
+    app.delete("/api/drafts", async (req, res) => {
+      try {
+        const { user_id, role } = req.query;
+        if (!user_id) return res.status(400).json({ error: "user_id is required" });
+
+        let result;
+        if (role === 'supervisor') {
+          result = await db.prepare("DELETE FROM evaluation_drafts WHERE status = 'draft'").run();
+        } else {
+          result = await db.prepare("DELETE FROM evaluation_drafts WHERE owner_id = ? AND status = 'draft'").run(user_id);
+        }
+
+        res.json({ success: true, deleted: result.changes ?? 0 });
+      } catch (e: any) {
+        console.error("/api/drafts DELETE-all failed:", e);
+        res.status(500).json({ error: e.message });
+      }
     });
 
     // Audit Logs Query & Management API

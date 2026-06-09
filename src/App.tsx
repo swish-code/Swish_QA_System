@@ -2,6 +2,7 @@ import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
+import { DraftsProvider } from './context/DraftsContext';
 import Layout from './components/Layout';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
@@ -31,6 +32,7 @@ export default function App() {
   return (
     <ThemeProvider>
       <AuthProvider>
+        <DraftsProvider>
         <Router>
           <Routes>
           <Route path="/login" element={<Login />} />
@@ -51,6 +53,7 @@ export default function App() {
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>
         </Router>
+        </DraftsProvider>
       </AuthProvider>
     </ThemeProvider>
   );

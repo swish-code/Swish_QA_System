@@ -21,10 +21,12 @@ import {
   Target,
   FileText,
   Search,
-  Check
+  Check,
+  Bookmark
 } from 'lucide-react';
 import { User as UserType } from '../types';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+import { notifyDraftsChanged } from '../context/DraftsContext';
 
 const COMMON_ISSUES = [
   'Wrong Order', 'No Upselling', 'Incomplete Info', 'Delay', 'Poor Listening',
@@ -35,9 +37,18 @@ export default function EvaluationForm() {
   const { user } = useAuth();
   const { id } = useParams();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const draftIdParam = searchParams.get('draft');
   const [agents, setAgents] = useState<UserType[]>([]);
   const [escalationHistory, setEscalationHistory] = useState<any[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSavingDraft, setIsSavingDraft] = useState(false);
+  // Tracks the draft this form is currently bound to. When set, Save as Draft
+  // updates the existing record instead of creating a new one, and a successful
+  // submit marks the draft 'completed' server-side.
+  const [activeDraftId, setActiveDraftId] = useState<number | null>(
+    draftIdParam ? parseInt(draftIdParam, 10) : null
+  );
   const [showActionModal, setShowActionModal] = useState(false);
   const [actionComment, setActionComment] = useState('');
   const [pendingAction, setPendingAction] = useState<'approved' | 'escalated' | 'rejected' | null>(null);
@@ -83,6 +94,46 @@ export default function EvaluationForm() {
   useEffect(() => {
     fetchFormOptions();
   }, []);
+
+  // Restore a draft if /evaluate?draft=<id> was used.
+  useEffect(() => {
+    if (!draftIdParam || !user) return;
+    const draftId = parseInt(draftIdParam, 10);
+    if (Number.isNaN(draftId)) return;
+
+    const loadDraft = async () => {
+      try {
+        const params = new URLSearchParams({
+          user_id: String(user.id),
+          role: user.role,
+        });
+        const res = await fetch(`/api/drafts/${draftId}?${params}`);
+        if (!res.ok) {
+          if (res.status === 404 || res.status === 410) {
+            alert('This draft no longer exists.');
+            navigate('/evaluate', { replace: true });
+          }
+          return;
+        }
+        const draft = await res.json();
+        if (draft?.data) {
+          // Merge so any newly-added defaults survive (e.g., force_zero_score
+          // for old drafts that pre-date the Mark-as-Critical button).
+          setFormData((prev: any) => ({
+            ...prev,
+            ...draft.data,
+            responses: draft.data.responses || {},
+            common_issues: draft.data.common_issues || [],
+            feedback: { ...prev.feedback, ...(draft.data.feedback || {}) },
+          }));
+          setActiveDraftId(draftId);
+        }
+      } catch (err) {
+        console.error('Failed to restore draft', err);
+      }
+    };
+    loadDraft();
+  }, [draftIdParam, user, navigate]);
 
   const fetchFormOptions = async () => {
     try {
@@ -269,6 +320,58 @@ export default function EvaluationForm() {
     return Math.max(0, 100 - totalDeductions);
   };
 
+  // Save the current form as a draft without submitting / scoring.
+  // - If we're already bound to an existing draft, update it in place.
+  // - Otherwise create a new draft and bind to it (so subsequent clicks
+  //   keep updating instead of creating duplicates).
+  const handleSaveDraft = async () => {
+    if (isSavingDraft) return;
+    setIsSavingDraft(true);
+    try {
+      const body: any = {
+        owner_id: user?.id,
+        user_id: user?.id,
+        role: user?.role,
+        agent_id: formData.agent_id || null,
+        brand: formData.brand || null,
+        call_type: formData.call_type || null,
+        data: formData,
+      };
+
+      let res: Response;
+      if (activeDraftId) {
+        res = await fetch(`/api/drafts/${activeDraftId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+      } else {
+        res = await fetch('/api/drafts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+      }
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Unknown error' }));
+        throw new Error(err.error || `HTTP ${res.status}`);
+      }
+
+      const json = await res.json();
+      if (!activeDraftId && json.id) {
+        setActiveDraftId(json.id);
+      }
+      notifyDraftsChanged();
+      alert('Draft saved. You can resume it later from the Drafts panel.');
+    } catch (err: any) {
+      console.error(err);
+      alert(`Failed to save draft: ${err.message || err}`);
+    } finally {
+      setIsSavingDraft(false);
+    }
+  };
+
   const handleSubmit = async () => {
     if (!formData.agent_id) {
       alert('Please select an agent.');
@@ -293,6 +396,9 @@ export default function EvaluationForm() {
       final_score: score,
       critical_failure: isCriticalFailed,
       qa_id: user?.id,
+      // When submitting from a restored draft, the server marks that draft
+      // as 'completed' so it disappears from the side panel.
+      draft_id: activeDraftId || undefined,
       data: {
         ...formData,
         responses: formData.responses
@@ -316,6 +422,8 @@ export default function EvaluationForm() {
       });
 
       if (res.ok) {
+        // Refresh the drafts badge — server marked the draft 'completed'.
+        if (activeDraftId) notifyDraftsChanged();
         alert(`Evaluation ${isCreation ? 'submitted' : 'updated'} successfully! Final Score: ${score}%`);
         navigate('/');
       }
@@ -445,6 +553,12 @@ export default function EvaluationForm() {
           <div>
             <h1 className="text-2xl font-black text-zinc-900 dark:text-white tracking-tighter uppercase leading-none">New Evaluation Form</h1>
             <p className="text-zinc-400 dark:text-zinc-500 text-[10px] font-black uppercase tracking-[0.2em] mt-2">Precision Audit Interface v2.4</p>
+            {activeDraftId && (
+              <div className="inline-flex items-center gap-1.5 mt-2 px-2 py-0.5 rounded-md bg-indigo-500/10 border border-indigo-500/20 text-indigo-600 dark:text-indigo-400">
+                <Bookmark size={10} />
+                <span className="text-[9px] font-black uppercase tracking-widest">Restored from draft #{activeDraftId}</span>
+              </div>
+            )}
           </div>
         </div>
 
@@ -828,9 +942,21 @@ export default function EvaluationForm() {
            Close
          </button>
 
+         {/* QA Save-as-Draft (creation only — restoring a draft is also creation) */}
+         {!id && (user?.role === 'qa' || user?.role === 'supervisor') && (
+           <button
+             onClick={handleSaveDraft}
+             disabled={isSavingDraft || isSubmitting}
+             className="px-8 py-4 rounded-2xl bg-white dark:bg-zinc-950 border border-indigo-300 dark:border-indigo-900/60 text-indigo-600 dark:text-indigo-400 font-black text-[10px] uppercase tracking-[0.2em] hover:bg-indigo-50 dark:hover:bg-indigo-950/30 transition-all flex items-center gap-3 disabled:opacity-50"
+             title={activeDraftId ? `Update the existing draft (#${activeDraftId})` : 'Save current progress as a draft'}
+           >
+             {isSavingDraft ? 'Saving…' : (activeDraftId ? 'Update Draft' : 'Save as Draft')} <Bookmark size={14} />
+           </button>
+         )}
+
          {/* QA Initial Submit */}
          {!id && (user?.role === 'qa' || user?.role === 'supervisor') && (
-           <button 
+           <button
              onClick={handleSubmit}
              disabled={isSubmitting}
              className="px-12 py-4 rounded-2xl bg-emerald-600 text-white font-black text-[10px] uppercase tracking-[0.2em] shadow-2xl shadow-emerald-500/20 hover:bg-emerald-500 transition-all flex items-center gap-3 disabled:opacity-50"
