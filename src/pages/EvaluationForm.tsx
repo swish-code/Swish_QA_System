@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useAuth } from '../context/AuthContext';
 import { motion, AnimatePresence } from 'motion/react';
@@ -54,7 +54,10 @@ export default function EvaluationForm() {
   const [pendingAction, setPendingAction] = useState<'approved' | 'escalated' | 'rejected' | null>(null);
 
   const [formStructure, setFormStructure] = useState<any[]>([]);
-  const [formData, setFormData] = useState<any>({
+
+  // Single source of truth for the empty-form shape — used at mount AND
+  // when Save-as-Draft wipes the form so the user can start fresh.
+  const buildEmptyForm = useCallback(() => ({
     agent_id: '',
     evaluator_id: user?.id || '',
     brand: '',
@@ -81,7 +84,9 @@ export default function EvaluationForm() {
       error_description: ''
     },
     status: 'Pending Review'
-  });
+  }), [user?.id]);
+
+  const [formData, setFormData] = useState<any>(() => buildEmptyForm());
 
   const [formOptions, setFormOptions] = useState<any>({
     brand: [],
@@ -358,12 +363,28 @@ export default function EvaluationForm() {
         throw new Error(err.error || `HTTP ${res.status}`);
       }
 
-      const json = await res.json();
-      if (!activeDraftId && json.id) {
-        setActiveDraftId(json.id);
-      }
+      await res.json();
       notifyDraftsChanged();
-      alert('Draft saved. You can resume it later from the Drafts panel.');
+
+      // After saving, blow the form back to its empty state so the QA can
+      // immediately start a fresh evaluation. We re-apply the default
+      // brand / call_type / etc. that fetchFormOptions seeded at mount —
+      // those would otherwise stay blank since the load effect only fires
+      // once. Also drop the active draft id and the ?draft= URL param so
+      // the next Save creates a brand-new draft instead of overwriting.
+      setFormData({
+        ...buildEmptyForm(),
+        brand: formOptions.brand[0]?.value || '',
+        call_direction: formOptions.call_direction[0]?.value || '',
+        call_category: formOptions.call_category[0]?.value || '',
+        call_type: formOptions.call_type[0]?.value || 'New Order',
+      });
+      setActiveDraftId(null);
+      if (draftIdParam) {
+        navigate('/evaluate', { replace: true });
+      }
+
+      alert('Draft saved. Open it later from the Drafts panel in the header.');
     } catch (err: any) {
       console.error(err);
       alert(`Failed to save draft: ${err.message || err}`);
