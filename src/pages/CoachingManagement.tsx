@@ -596,9 +596,13 @@ export default function CoachingManagement() {
               </div>
 
               {detailsTarget.error_description && (
-                <div className="flex items-start gap-2 p-3 rounded-2xl bg-rose-500/5 border border-rose-500/20 text-xs text-rose-700 dark:text-rose-400">
-                  <AlertCircle size={14} className="shrink-0 mt-0.5" />
-                  <span>{detailsTarget.error_description}</span>
+                <div>
+                  <p className="text-[9px] font-black uppercase tracking-widest text-rose-500 dark:text-rose-400 mb-2 flex items-center gap-1.5">
+                    <AlertCircle size={11} /> Issues from this call
+                  </p>
+                  <pre className="text-xs text-zinc-700 dark:text-zinc-300 bg-rose-500/5 border border-rose-500/20 rounded-2xl p-4 whitespace-pre-wrap font-sans">
+                    {detailsTarget.error_description}
+                  </pre>
                 </div>
               )}
 

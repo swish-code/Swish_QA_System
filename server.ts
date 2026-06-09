@@ -694,7 +694,7 @@ async function startServer() {
         const coachingRows = await db.prepare(`
           SELECT cr.id, cr.evaluation_id, cr.status, cr.created_at,
                  cr.session_started_at, cr.agent_approved_at, cr.completed_at,
-                 cr.tl_comment, cr.tl_id, cr.agent_id,
+                 cr.tl_comment, cr.error_description, cr.tl_id, cr.agent_id,
                  tl.display_name AS tl_name,
                  ag.display_name AS coaching_agent_name
           FROM coaching_requests cr
@@ -717,6 +717,7 @@ async function startServer() {
               agent_id: row.agent_id,
               agent_name: row.coaching_agent_name,
               tl_comment: row.tl_comment,
+              error_description: row.error_description,
               created_at: row.created_at,
               agent_approved_at: row.agent_approved_at,
               session_started_at: row.session_started_at,
@@ -1411,10 +1412,49 @@ async function startServer() {
           evalData = {};
         }
         const customerPhone = evalData?.customer_phone || evalData?.phone || '';
-        const errorDesc = evalData?.feedback?.error_description
-          || evalData?.feedback?.general
-          || (Array.isArray(evalData?.common_issues) ? evalData.common_issues.join(', ') : '')
-          || '';
+
+        // Build a rich error_description that lists every failed evaluation
+        // item (where the QA marked the answer as "No"), the QA's general
+        // note, and any common-issue tags. The agent sees this exact text
+        // when reviewing the coaching request, so it has to include enough
+        // context to make sense without opening the original evaluation.
+        const failedLines: string[] = [];
+        try {
+          const responses = evalData?.responses || {};
+          const failedIds = Object.keys(responses).filter(k => responses[k] === 'No');
+          if (failedIds.length) {
+            const placeholders = failedIds.map(() => '?').join(',');
+            const questions = await db.prepare(
+              `SELECT id, label_en, value FROM form_settings
+               WHERE field_type = 'eval_question' AND id IN (${placeholders})`
+            ).all(...failedIds) as any[];
+            const byId = new Map<string, any>(questions.map(q => [String(q.id), q]));
+            // Preserve the original sort order from the evaluation responses
+            for (const fid of failedIds) {
+              const q = byId.get(String(fid));
+              if (!q) { failedLines.push(`• Question #${fid}`); continue; }
+              let cfg: any = {};
+              try { cfg = typeof q.value === 'string' ? JSON.parse(q.value) : (q.value || {}); } catch {}
+              const tags: string[] = [];
+              if (cfg.weight) tags.push(`-${cfg.weight}%`);
+              if (cfg.critical) tags.push('CRITICAL');
+              failedLines.push(`• ${q.label_en}${tags.length ? ` (${tags.join(' · ')})` : ''}`);
+            }
+          }
+        } catch (err) {
+          console.error('Failed to expand failed-items for coaching request:', err);
+        }
+
+        const parts: string[] = [];
+        if (failedLines.length) {
+          parts.push(`Failed items (${failedLines.length}):\n${failedLines.join('\n')}`);
+        }
+        if (Array.isArray(evalData?.common_issues) && evalData.common_issues.length) {
+          parts.push(`Common issues: ${evalData.common_issues.join(', ')}`);
+        }
+        const generalNote = evalData?.feedback?.error_description || evalData?.feedback?.general;
+        if (generalNote) parts.push(`QA note: ${generalNote}`);
+        const errorDesc = parts.join('\n\n');
 
         const result = await db.prepare(
           `INSERT INTO coaching_requests

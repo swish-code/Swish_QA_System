@@ -35,6 +35,8 @@ export interface CoachingSnapshot {
   agent_id: number;
   agent_name: string;
   tl_comment: string;
+  /** Auto-generated list of failed evaluation items + QA notes from the call. */
+  error_description?: string;
   created_at: string;
   agent_approved_at: string | null;
   session_started_at: string | null;

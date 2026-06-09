@@ -1,7 +1,7 @@
 import React from 'react';
 import { createPortal } from 'react-dom';
 import { motion } from 'motion/react';
-import { X, Check, Clock, MessageSquare, User, Calendar, ShieldCheck } from 'lucide-react';
+import { X, Check, Clock, MessageSquare, User, Calendar, ShieldCheck, XCircle } from 'lucide-react';
 import type { CoachingSnapshot } from '../types';
 
 function fmt(ts: string | null): string {
@@ -105,6 +105,18 @@ export default function CoachingDetailsDialog({ coaching, evaluationId, onClose 
               </p>
             </div>
           </div>
+
+          {/* Issues from the original call (failed items + QA note) */}
+          {coaching.error_description && (
+            <div>
+              <p className="text-[9px] font-black uppercase tracking-widest text-rose-500 dark:text-rose-400 mb-2 flex items-center gap-1.5">
+                <XCircle size={11} /> Issues from this call
+              </p>
+              <pre className="text-xs text-zinc-700 dark:text-zinc-300 bg-rose-500/5 border border-rose-500/20 rounded-2xl p-4 whitespace-pre-wrap font-sans">
+                {coaching.error_description}
+              </pre>
+            </div>
+          )}
 
           {/* TL comment / coaching notes */}
           {coaching.tl_comment && (
