@@ -57,6 +57,9 @@ export default function EvaluationForm() {
     common_issues: [],
     error_classification: '',
     ctq_checked: false,
+    // When the QA flips this, the score is forced to 0 regardless of the
+    // pass/fail toggles. Used for "Critical Failure" overrides.
+    force_zero_score: false,
     feedback: {
       general: '',
       internal: '',
@@ -239,6 +242,9 @@ export default function EvaluationForm() {
   };
 
   const calculateScore = () => {
+    // Hard override: QA explicitly marked the call as a critical failure.
+    if (formData.force_zero_score) return 0;
+
     let totalPossible = 0;
     let totalDeductions = 0;
     let isCriticalFailed = false;
@@ -246,7 +252,7 @@ export default function EvaluationForm() {
     formStructure.forEach(section => {
       section.items.forEach((item: any) => {
         const response = formData.responses[item.id] || 'Yes';
-        
+
         if (response === 'N/A') return;
 
         totalPossible += item.weight;
@@ -259,7 +265,7 @@ export default function EvaluationForm() {
     });
 
     if (isCriticalFailed) return 0;
-    
+
     return Math.max(0, 100 - totalDeductions);
   };
 
@@ -270,7 +276,9 @@ export default function EvaluationForm() {
     }
 
     setIsSubmitting(true);
-    let isCriticalFailed = false;
+    // Manual zero-score override also counts as a critical failure
+    // so the server-side flag and downstream reports stay consistent.
+    let isCriticalFailed = !!formData.force_zero_score;
     formStructure.forEach(section => {
       section.items.forEach((item: any) => {
         if (formData.responses[item.id] === 'No' && item.critical) {
@@ -440,7 +448,24 @@ export default function EvaluationForm() {
           </div>
         </div>
 
-        <div className="mt-6 md:mt-0 flex items-center gap-10">
+        <div className="mt-6 md:mt-0 flex items-center gap-6 sm:gap-10 flex-wrap">
+          <button
+            type="button"
+            disabled={isReadOnly}
+            onClick={() => setFormData((prev: any) => ({ ...prev, force_zero_score: !prev.force_zero_score }))}
+            title={formData.force_zero_score
+              ? 'Critical failure override is ON — click to remove it and use the calculated score'
+              : 'Force the total score to 0 (Critical Failure override)'}
+            className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest border transition-all flex items-center gap-2 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed ${
+              formData.force_zero_score
+                ? 'bg-rose-600 text-white border-rose-500 shadow-lg shadow-rose-500/30 hover:bg-rose-500'
+                : 'bg-white dark:bg-zinc-900 text-rose-600 dark:text-rose-400 border-rose-300 dark:border-rose-900/40 hover:bg-rose-50 dark:hover:bg-rose-950/30'
+            }`}
+          >
+            <AlertCircle size={14} />
+            {formData.force_zero_score ? 'Critical Failure (Reset)' : 'Mark as Critical (0%)'}
+          </button>
+
           <div className="text-right">
             <p className="text-[10px] font-black text-zinc-400 dark:text-zinc-600 uppercase tracking-widest mb-1">Total Score</p>
             <div className="flex items-center gap-3">
@@ -452,6 +477,11 @@ export default function EvaluationForm() {
                  <Check className="text-indigo-600 dark:text-emerald-500" size={24} />
               </div>
             </div>
+            {formData.force_zero_score && (
+              <p className="text-[9px] font-black text-rose-500 uppercase tracking-widest mt-1">
+                Critical Failure override
+              </p>
+            )}
           </div>
         </div>
       </div>
