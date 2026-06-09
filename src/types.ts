@@ -25,6 +25,22 @@ export interface FormConfig {
   call_type: string;
 }
 
+/** Snapshot of the most relevant coaching session attached to an evaluation
+ *  (completed first, then most recently created). Null when none exists. */
+export interface CoachingSnapshot {
+  id: number;
+  status: string;
+  tl_id: number;
+  tl_name: string;
+  agent_id: number;
+  agent_name: string;
+  tl_comment: string;
+  created_at: string;
+  agent_approved_at: string | null;
+  session_started_at: string | null;
+  completed_at: string | null;
+}
+
 export interface Evaluation {
   id: number;
   date: string;
@@ -46,6 +62,8 @@ export interface Evaluation {
     | 'Reevaluation Rejected'; // legacy — kept for old rows.
   critical_failure: boolean;
   data: Record<string, any>;
+  /** Server-attached coaching summary. Null = call has never been coached. */
+  coaching?: CoachingSnapshot | null;
 }
 
 export interface Notification {

@@ -600,7 +600,7 @@ async function startServer() {
 
     // Evaluations
     app.get("/api/evaluations", async (req, res) => {
-      const { user_id, role, agent_id, from_date, to_date, status, search } = req.query;
+      const { user_id, role, agent_id, from_date, to_date, status, search, coaching_status } = req.query;
       const page = parseInt(req.query.page as string) || 1;
       const limit = parseInt(req.query.limit as string) || 10;
       const offset = (page - 1) * limit;
@@ -661,6 +661,14 @@ async function startServer() {
         params.push(searchPattern, searchPattern);
       }
 
+      // Coaching filter: 'coached' = at least one completed coaching session
+      // for this evaluation; 'not_coached' = no completed session yet.
+      if (coaching_status === 'coached') {
+        baseQuery += " AND EXISTS (SELECT 1 FROM coaching_requests cr WHERE cr.evaluation_id = e.id AND cr.status = 'Completed')";
+      } else if (coaching_status === 'not_coached') {
+        baseQuery += " AND NOT EXISTS (SELECT 1 FROM coaching_requests cr WHERE cr.evaluation_id = e.id AND cr.status = 'Completed')";
+      }
+
       // Count total items
       const countResult = await db.prepare(`SELECT COUNT(*) as count ${baseQuery}`).get(...params) as { count: number };
       const totalItems = countResult.count;
@@ -674,14 +682,55 @@ async function startServer() {
         LIMIT ? OFFSET ?
       `;
       const evals = await db.prepare(query).all(...params, limit, offset) as any[];
-      
+
+      // Pull coaching session info for just the IDs on this page. We pick
+      // the "most relevant" session per evaluation — completed first, then
+      // the most recently created — so the row badge reflects the current
+      // state. Empty list short-circuits the query.
+      const evalIds = evals.map(e => e.id);
+      const coachingMap = new Map<number, any>();
+      if (evalIds.length) {
+        const placeholders = evalIds.map(() => '?').join(',');
+        const coachingRows = await db.prepare(`
+          SELECT cr.id, cr.evaluation_id, cr.status, cr.created_at,
+                 cr.session_started_at, cr.agent_approved_at, cr.completed_at,
+                 cr.tl_comment, cr.tl_id, cr.agent_id,
+                 tl.display_name AS tl_name,
+                 ag.display_name AS coaching_agent_name
+          FROM coaching_requests cr
+          LEFT JOIN users tl ON cr.tl_id = tl.id
+          LEFT JOIN users ag ON cr.agent_id = ag.id
+          WHERE cr.evaluation_id IN (${placeholders})
+          ORDER BY
+            CASE WHEN cr.status = 'Completed' THEN 0 ELSE 1 END,
+            cr.id DESC
+        `).all(...evalIds) as any[];
+
+        // First match wins per evaluation_id (already ordered: completed first)
+        coachingRows.forEach(row => {
+          if (!coachingMap.has(row.evaluation_id)) {
+            coachingMap.set(row.evaluation_id, {
+              id: row.id,
+              status: row.status,
+              tl_id: row.tl_id,
+              tl_name: row.tl_name,
+              agent_id: row.agent_id,
+              agent_name: row.coaching_agent_name,
+              tl_comment: row.tl_comment,
+              created_at: row.created_at,
+              agent_approved_at: row.agent_approved_at,
+              session_started_at: row.session_started_at,
+              completed_at: row.completed_at,
+            });
+          }
+        });
+      }
+
       res.json({
         data: evals.map((e) => {
-          try {
-            return { ...e, data: typeof e.data === 'string' ? JSON.parse(e.data) : (e.data || {}) };
-          } catch (err) {
-            return { ...e, data: {} };
-          }
+          let parsedData = {};
+          try { parsedData = typeof e.data === 'string' ? JSON.parse(e.data) : (e.data || {}); } catch {}
+          return { ...e, data: parsedData, coaching: coachingMap.get(e.id) || null };
         }),
         pagination: {
           totalItems,

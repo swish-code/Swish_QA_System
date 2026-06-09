@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import CoachingRequestDialog from '../components/CoachingRequestDialog';
+import CoachingDetailsDialog from '../components/CoachingDetailsDialog';
 import { useAuth } from '../context/AuthContext';
 import { 
   Search, 
@@ -44,14 +45,17 @@ export default function AuditList() {
   const [searchTerm, setSearchTerm] = useState(searchParams.get('search') || '');
   const [selectedAgent, setSelectedAgent] = useState(searchParams.get('agent_id') || 'all');
   const [statusFilter, setStatusFilter] = useState(searchParams.get('status') || 'all');
+  const [coachingFilter, setCoachingFilter] = useState(searchParams.get('coaching_status') || 'all');
   const [startDate, setStartDate] = useState(searchParams.get('from_date') || '');
   const [endDate, setEndDate] = useState(searchParams.get('to_date') || '');
-  
+
   const [isLoading, setIsLoading] = useState(true);
   const [isChangingPage, setIsChangingPage] = useState(false);
 
   // Evaluation row the TL clicked "Coaching" on — opens the request dialog.
   const [coachingTarget, setCoachingTarget] = useState<Evaluation | null>(null);
+  // Evaluation row whose coaching badge was clicked — opens the details modal.
+  const [coachingDetails, setCoachingDetails] = useState<Evaluation | null>(null);
 
   const fetchEvaluations = useCallback(async (params: URLSearchParams) => {
     setIsChangingPage(true);
@@ -104,6 +108,7 @@ export default function AuditList() {
     updateFilters({
       agent_id: selectedAgent,
       status: statusFilter,
+      coaching_status: coachingFilter,
       from_date: startDate,
       to_date: endDate,
       search: searchTerm,
@@ -115,6 +120,7 @@ export default function AuditList() {
     setSearchTerm('');
     setSelectedAgent('all');
     setStatusFilter('all');
+    setCoachingFilter('all');
     setStartDate('');
     setEndDate('');
     setSearchParams({});
@@ -181,7 +187,7 @@ export default function AuditList() {
       <div className="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-3 sm:p-4 shadow-sm">
         <div className="flex flex-col lg:flex-row gap-3 lg:items-end">
           {/* Filters Grid */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 sm:gap-3 flex-1">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 sm:gap-3 flex-1">
             {/* Agent Filter */}
             <div>
               <label className="text-[9px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest block mb-1 ml-1">Agent</label>
@@ -241,6 +247,23 @@ export default function AuditList() {
               </div>
             </div>
 
+            {/* Coaching Filter */}
+            <div>
+              <label className="text-[9px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest block mb-1 ml-1">Coaching</label>
+              <div className="relative">
+                <select
+                  className="w-full bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg pl-3 pr-7 py-2 text-xs text-zinc-800 dark:text-zinc-100 outline-none focus:border-indigo-500 appearance-none cursor-pointer"
+                  value={coachingFilter}
+                  onChange={(e) => setCoachingFilter(e.target.value)}
+                >
+                  <option value="all">All Calls</option>
+                  <option value="coached">Coached Only</option>
+                  <option value="not_coached">Not Coached Only</option>
+                </select>
+                <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 dark:text-zinc-600 pointer-events-none" size={12} />
+              </div>
+            </div>
+
             {/* Search Filter */}
             <div className="col-span-2 sm:col-span-3 lg:col-span-1">
               <label className="text-[9px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest block mb-1 ml-1">Search</label>
@@ -280,13 +303,14 @@ export default function AuditList() {
       {/* List Container */}
       <div className="bg-white dark:bg-zinc-950/50 rounded-[2.5rem] border border-zinc-200 dark:border-zinc-800 overflow-hidden shadow-sm dark:shadow-2xl backdrop-blur-sm">
         <div className="overflow-x-auto -mx-4 sm:mx-0">
-          <table className="w-full text-left border-collapse min-w-[720px]">
+          <table className="w-full text-left border-collapse min-w-[860px]">
             <thead>
               <tr className="border-b border-zinc-100 dark:border-zinc-800/50">
                 <th className="px-8 py-6 text-[10px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest">Audit Profile</th>
                 <th className="px-8 py-6 text-[10px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest">Metadata</th>
                 <th className="px-8 py-6 text-[10px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest">Performance</th>
                 <th className="px-8 py-6 text-[10px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest">Status</th>
+                <th className="px-8 py-6 text-[10px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest">Coaching</th>
                 <th className="px-8 py-6 text-[10px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest text-center">Actions</th>
               </tr>
             </thead>
@@ -294,7 +318,7 @@ export default function AuditList() {
               {isLoading ? (
                 Array.from({ length: 5 }).map((_, i) => (
                   <tr key={i} className="animate-pulse">
-                    <td colSpan={5} className="px-8 py-10">
+                    <td colSpan={6} className="px-8 py-10">
                       <div className="flex items-center gap-4">
                         <div className="w-12 h-12 bg-zinc-100 dark:bg-zinc-900/50 rounded-2xl" />
                         <div className="space-y-2">
@@ -307,7 +331,7 @@ export default function AuditList() {
                 ))
               ) : evaluations.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="py-12 sm:py-20 text-center text-zinc-400 dark:text-zinc-600 italic text-sm">
+                  <td colSpan={6} className="py-12 sm:py-20 text-center text-zinc-400 dark:text-zinc-600 italic text-sm">
                     No audits found matching your criteria.
                   </td>
                 </tr>
@@ -372,6 +396,37 @@ export default function AuditList() {
                       <span className={`inline-block px-3 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest border ${getStatusColor(audit.status)}`}>
                         {audit.status}
                       </span>
+                    </td>
+                    <td className="px-8 py-6">
+                      {audit.coaching && audit.coaching.status === 'Completed' ? (
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); setCoachingDetails(audit); }}
+                          className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest border bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 hover:bg-emerald-500 hover:text-white hover:border-emerald-500 transition-colors"
+                          title="Click for coaching details"
+                        >
+                          <span aria-hidden>✓</span>
+                          Coached
+                        </button>
+                      ) : audit.coaching ? (
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); setCoachingDetails(audit); }}
+                          className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest border bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/30 hover:bg-indigo-500 hover:text-white hover:border-indigo-500 transition-colors"
+                          title="Coaching in progress — click for details"
+                        >
+                          <span aria-hidden>⋯</span>
+                          {audit.coaching.status}
+                        </button>
+                      ) : (
+                        <span
+                          className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest border bg-zinc-100 dark:bg-zinc-900/50 text-zinc-500 dark:text-zinc-500 border-zinc-200 dark:border-zinc-800"
+                          title="No coaching session yet"
+                        >
+                          <span aria-hidden>⏳</span>
+                          Not Coached
+                        </span>
+                      )}
                     </td>
                     <td className="px-8 py-6">
                       <div className="flex items-center justify-center gap-2">
@@ -515,6 +570,14 @@ export default function AuditList() {
           tlId={user.id}
           onClose={() => setCoachingTarget(null)}
           onSubmitted={() => setCoachingTarget(null)}
+        />
+      )}
+
+      {coachingDetails?.coaching && (
+        <CoachingDetailsDialog
+          coaching={coachingDetails.coaching}
+          evaluationId={coachingDetails.id}
+          onClose={() => setCoachingDetails(null)}
         />
       )}
     </div>
