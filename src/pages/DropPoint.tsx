@@ -1,18 +1,19 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from '../context/AuthContext';
-import { 
-  BarChart3, 
-  Search, 
-  RefreshCw, 
-  ArrowUpDown, 
-  AlertCircle, 
-  ChevronDown, 
+import {
+  BarChart3,
+  Search,
+  RefreshCw,
+  ArrowUpDown,
+  AlertCircle,
+  ChevronDown,
   ChevronUp,
   User,
   Phone,
   Target,
-  Clock
+  Calendar,
+  Filter
 } from 'lucide-react';
 
 interface AgentReport {
@@ -24,21 +25,39 @@ interface AgentReport {
   error_list: { label: string; count: number }[];
 }
 
+const todayStr = () => new Date().toISOString().split('T')[0];
+
 export default function DropPoint() {
   const { user } = useAuth();
   const [reports, setReports] = useState<AgentReport[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Filters — applied server-side for date range + agent, client-side for search.
   const [searchTerm, setSearchTerm] = useState('');
-  const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' }>({ 
-    key: 'total_calls', 
-    direction: 'desc' 
+  const [fromDate, setFromDate] = useState<string>(todayStr());
+  const [toDate, setToDate] = useState<string>(todayStr());
+  const [selectedAgent, setSelectedAgent] = useState<string>('all');
+
+  // Agent list (for the dropdown). Loaded once on mount.
+  const [agents, setAgents] = useState<{ id: number; display_name: string }[]>([]);
+
+  const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' }>({
+    key: 'total_calls',
+    direction: 'desc'
   });
   const [expandedRow, setExpandedRow] = useState<number | null>(null);
 
-  const fetchReport = async () => {
+  const fetchReport = useCallback(async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams({ user_id: String(user?.id || ''), role: user?.role || '' });
+      const params = new URLSearchParams({
+        user_id: String(user?.id || ''),
+        role: user?.role || '',
+      });
+      if (fromDate) params.set('from_date', fromDate);
+      if (toDate) params.set('to_date', toDate);
+      if (selectedAgent && selectedAgent !== 'all') params.set('agent_id', selectedAgent);
+
       const response = await fetch(`/api/stats/drop-point?${params.toString()}`);
       const data = await response.json();
       setReports(data);
@@ -47,14 +66,25 @@ export default function DropPoint() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [user, fromDate, toDate, selectedAgent]);
 
+  // Initial load + whenever filters change
+  useEffect(() => { fetchReport(); }, [fetchReport]);
+
+  // Load agents once for the dropdown
   useEffect(() => {
-    fetchReport();
-    // Auto refresh every 5 minutes
+    fetch('/api/users')
+      .then(res => res.ok ? res.json() : Promise.reject())
+      .then(data => setAgents(data.filter((u: any) => u.role === 'agent')))
+      .catch(() => {});
+  }, []);
+
+  // Auto-refresh every 5 minutes (only when viewing today and no specific
+  // agent — otherwise the manual Refresh button is fine).
+  useEffect(() => {
     const interval = setInterval(fetchReport, 300000);
     return () => clearInterval(interval);
-  }, []);
+  }, [fetchReport]);
 
   const handleSort = (key: string) => {
     setSortConfig({
@@ -63,20 +93,39 @@ export default function DropPoint() {
     });
   };
 
-  const filteredReports = reports
-    .filter(r => r.agent_name.toLowerCase().includes(searchTerm.toLowerCase()))
-    .sort((a: any, b: any) => {
-      let valA = a[sortConfig.key];
-      let valB = b[sortConfig.key];
-      
-      if (sortConfig.key === 'errors_count') {
-        valA = a.error_list.reduce((acc: number, curr: any) => acc + curr.count, 0);
-        valB = b.error_list.reduce((acc: number, curr: any) => acc + curr.count, 0);
-      }
+  const handleResetFilters = () => {
+    setSearchTerm('');
+    setFromDate(todayStr());
+    setToDate(todayStr());
+    setSelectedAgent('all');
+  };
 
-      if (sortConfig.direction === 'asc') return valA > valB ? 1 : -1;
-      return valA < valB ? 1 : -1;
-    });
+  // Smart heading caption based on filters
+  const rangeCaption = useMemo(() => {
+    if (fromDate === toDate) {
+      if (fromDate === todayStr()) return 'Live Daily Performance Report • Today';
+      return `Performance Report • ${fromDate}`;
+    }
+    return `Performance Report • ${fromDate || '…'} → ${toDate || '…'}`;
+  }, [fromDate, toDate]);
+
+  const filteredReports = useMemo(() => {
+    const q = searchTerm.toLowerCase();
+    return reports
+      .filter(r => r.agent_name.toLowerCase().includes(q))
+      .sort((a: any, b: any) => {
+        let valA = a[sortConfig.key];
+        let valB = b[sortConfig.key];
+
+        if (sortConfig.key === 'errors_count') {
+          valA = a.error_list.reduce((acc: number, curr: any) => acc + curr.count, 0);
+          valB = b.error_list.reduce((acc: number, curr: any) => acc + curr.count, 0);
+        }
+
+        if (sortConfig.direction === 'asc') return valA > valB ? 1 : -1;
+        return valA < valB ? 1 : -1;
+      });
+  }, [reports, searchTerm, sortConfig]);
 
   return (
     <div className="p-4 sm:p-6 lg:p-8 space-y-6 sm:space-y-8 max-w-[1600px] mx-auto">
@@ -88,29 +137,92 @@ export default function DropPoint() {
             Drop Point
           </h1>
           <p className="text-zinc-500 dark:text-zinc-400 text-xs font-bold uppercase tracking-widest mt-2 flex items-center gap-2">
-            <Clock size={12} />
-            Live Daily Performance Report • Today Only
+            <Calendar size={12} />
+            {rangeCaption}
           </p>
         </div>
 
-        <div className="flex items-center gap-4 w-full md:w-auto">
-          <div className="relative flex-1 md:w-80">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400" size={16} />
-            <input 
-              type="text" 
-              placeholder="Search employee..."
-              className="w-full bg-white dark:bg-zinc-900 border border-zinc-100 dark:border-zinc-800 rounded-2xl pl-12 pr-6 py-3 text-sm outline-none focus:border-indigo-500 shadow-sm"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-            />
-          </div>
-          <button 
+        <div className="flex items-center gap-3">
+          <button
             onClick={fetchReport}
             disabled={loading}
             className="p-3 bg-white dark:bg-zinc-900 border border-zinc-100 dark:border-zinc-800 rounded-2xl text-zinc-600 dark:text-zinc-400 hover:text-indigo-600 dark:hover:text-white hover:border-indigo-500/30 transition-all shadow-sm disabled:opacity-50"
+            title="Refresh"
           >
             <RefreshCw size={20} className={loading ? 'animate-spin' : ''} />
           </button>
+        </div>
+      </div>
+
+      {/* Filter Bar */}
+      <div className="bg-white dark:bg-zinc-900/40 border border-zinc-100 dark:border-zinc-800 rounded-2xl p-3 sm:p-4 shadow-sm">
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-5 gap-2 sm:gap-3">
+          {/* From */}
+          <div>
+            <label className="text-[9px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest block mb-1 ml-1">From (Call Date)</label>
+            <input
+              type="date"
+              className="w-full bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg px-3 py-2 text-xs text-zinc-800 dark:text-zinc-100 outline-none focus:border-indigo-500 dark:[color-scheme:dark]"
+              value={fromDate}
+              max={toDate || undefined}
+              onChange={(e) => setFromDate(e.target.value)}
+            />
+          </div>
+
+          {/* To */}
+          <div>
+            <label className="text-[9px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest block mb-1 ml-1">To (Call Date)</label>
+            <input
+              type="date"
+              className="w-full bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg px-3 py-2 text-xs text-zinc-800 dark:text-zinc-100 outline-none focus:border-indigo-500 dark:[color-scheme:dark]"
+              value={toDate}
+              min={fromDate || undefined}
+              onChange={(e) => setToDate(e.target.value)}
+            />
+          </div>
+
+          {/* Employee dropdown */}
+          <div>
+            <label className="text-[9px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest block mb-1 ml-1">Employee</label>
+            <div className="relative">
+              <select
+                className="w-full bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg pl-3 pr-7 py-2 text-xs text-zinc-800 dark:text-zinc-100 outline-none focus:border-indigo-500 appearance-none cursor-pointer"
+                value={selectedAgent}
+                onChange={(e) => setSelectedAgent(e.target.value)}
+              >
+                <option value="all">All Employees</option>
+                {agents.map(a => (
+                  <option key={a.id} value={a.id}>{a.display_name}</option>
+                ))}
+              </select>
+              <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 dark:text-zinc-600 pointer-events-none" size={12} />
+            </div>
+          </div>
+
+          {/* Live search */}
+          <div className="col-span-2 sm:col-span-1">
+            <label className="text-[9px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest block mb-1 ml-1">Search</label>
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400 dark:text-zinc-600" size={12} />
+              <input
+                type="text"
+                placeholder="Filter by name…"
+                className="w-full bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg pl-7 pr-3 py-2 text-xs text-zinc-800 dark:text-zinc-100 outline-none focus:border-indigo-500 placeholder:text-zinc-400"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+              />
+            </div>
+          </div>
+
+          {/* Reset button */}
+          <div className="col-span-2 sm:col-span-4 lg:col-span-1 flex items-end">
+            <button
+              onClick={handleResetFilters}
+              className="w-full px-3 py-2 rounded-lg bg-zinc-50 dark:bg-zinc-900 text-zinc-600 dark:text-zinc-400 font-black text-[10px] uppercase tracking-widest border border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800 hover:text-zinc-900 dark:hover:text-white transition-all active:scale-95 flex items-center justify-center gap-2"
+            >
+              <Filter size={11} /> Reset
+            </button>
+          </div>
         </div>
       </div>
 
@@ -136,7 +248,7 @@ export default function DropPoint() {
             <span className="text-[10px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest">Team Average Score</span>
           </div>
           <p className="text-2xl sm:text-3xl md:text-4xl font-black text-zinc-900 dark:text-white tracking-tighter">
-            {reports.length > 0 
+            {reports.length > 0
               ? (reports.reduce((acc, curr) => acc + parseFloat(curr.avg_score), 0) / reports.length).toFixed(1)
               : '0.0'}%
           </p>
@@ -162,7 +274,7 @@ export default function DropPoint() {
             <thead>
               <tr className="border-b border-zinc-100 dark:border-zinc-800/50 bg-white dark:bg-zinc-950/20">
                 <th className="px-8 py-5">
-                  <button 
+                  <button
                     onClick={() => handleSort('agent_name')}
                     className="flex items-center gap-2 text-[10px] font-black text-zinc-500 uppercase tracking-widest hover:text-indigo-600 transition-colors"
                   >
@@ -170,15 +282,15 @@ export default function DropPoint() {
                   </button>
                 </th>
                 <th className="px-8 py-5">
-                  <button 
+                  <button
                     onClick={() => handleSort('total_calls')}
                     className="flex items-center gap-2 text-[10px] font-black text-zinc-500 uppercase tracking-widest hover:text-indigo-600 transition-colors"
                   >
-                    Calls Today <ArrowUpDown size={12} />
+                    Calls <ArrowUpDown size={12} />
                   </button>
                 </th>
                 <th className="px-8 py-5">
-                  <button 
+                  <button
                     onClick={() => handleSort('avg_score')}
                     className="flex items-center gap-2 text-[10px] font-black text-zinc-500 uppercase tracking-widest hover:text-indigo-600 transition-colors"
                   >
@@ -186,7 +298,7 @@ export default function DropPoint() {
                   </button>
                 </th>
                 <th className="px-8 py-5">
-                  <button 
+                  <button
                     onClick={() => handleSort('avg_duration')}
                     className="flex items-center gap-2 text-[10px] font-black text-zinc-500 uppercase tracking-widest hover:text-indigo-600 transition-colors"
                   >
@@ -194,7 +306,7 @@ export default function DropPoint() {
                   </button>
                 </th>
                 <th className="px-8 py-5">
-                  <button 
+                  <button
                     onClick={() => handleSort('errors_count')}
                     className="flex items-center gap-2 text-[10px] font-black text-zinc-500 uppercase tracking-widest hover:text-indigo-600 transition-colors"
                   >
@@ -208,19 +320,19 @@ export default function DropPoint() {
               {loading ? (
                 Array.from({ length: 5 }).map((_, i) => (
                   <tr key={i} className="animate-pulse">
-                    <td colSpan={5} className="px-8 py-6">
+                    <td colSpan={6} className="px-8 py-6">
                       <div className="h-4 bg-zinc-100 dark:bg-zinc-800 rounded-lg w-full" />
                     </td>
                   </tr>
                 ))
               ) : filteredReports.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-8 py-12 sm:py-20 text-center">
+                  <td colSpan={6} className="px-8 py-12 sm:py-20 text-center">
                     <div className="flex flex-col items-center gap-4">
                       <div className="p-4 bg-zinc-50 dark:bg-zinc-950 rounded-full">
                         <User className="text-zinc-300" size={32} />
                       </div>
-                      <p className="text-zinc-400 dark:text-zinc-600 text-xs font-black uppercase tracking-widest italic">No matching reports found for today</p>
+                      <p className="text-zinc-400 dark:text-zinc-600 text-xs font-black uppercase tracking-widest italic">No matching reports for the selected range</p>
                     </div>
                   </td>
                 </tr>
@@ -251,8 +363,8 @@ export default function DropPoint() {
                             {report.avg_score}%
                           </span>
                           <div className="w-16 h-1 bg-zinc-100 dark:bg-zinc-800 rounded-full overflow-hidden">
-                            <div 
-                              className={`h-full transition-all duration-1000 ${parseFloat(report.avg_score) >= 90 ? 'bg-emerald-500' : parseFloat(report.avg_score) >= 80 ? 'bg-indigo-500' : 'bg-rose-500'}`} 
+                            <div
+                              className={`h-full transition-all duration-1000 ${parseFloat(report.avg_score) >= 90 ? 'bg-emerald-500' : parseFloat(report.avg_score) >= 80 ? 'bg-indigo-500' : 'bg-rose-500'}`}
                               style={{ width: `${report.avg_score}%` }}
                             />
                           </div>
@@ -281,8 +393,8 @@ export default function DropPoint() {
                           exit={{ opacity: 0, height: 0 }}
                           className="bg-white dark:bg-zinc-950/30 overflow-hidden"
                         >
-                          <td colSpan={5} className="px-8 py-0">
-                            <motion.div 
+                          <td colSpan={6} className="px-8 py-0">
+                            <motion.div
                               initial={{ y: -20 }}
                               animate={{ y: 0 }}
                               className="py-8 space-y-6"
@@ -308,7 +420,7 @@ export default function DropPoint() {
                               ) : (
                                 <div className="p-8 border-2 border-dashed border-zinc-100 dark:border-zinc-800 rounded-3xl text-center">
                                   <p className="text-zinc-400 dark:text-zinc-600 text-[10px] font-black uppercase tracking-widest italic">
-                                    Pristine Performance • No issues found in today's calls
+                                    Pristine Performance • No issues found in this range
                                   </p>
                                 </div>
                               )}

@@ -1793,20 +1793,36 @@ async function startServer() {
     // Stats & Analytics
     app.get("/api/stats/drop-point", async (req, res) => {
       try {
-        const { user_id, role } = req.query;
+        const { user_id, role, from_date, to_date, agent_id } = req.query;
         const today = new Date().toISOString().split('T')[0];
+
+        // Range defaults to "today only" when both bounds are missing.
+        // Either bound alone is honored — e.g. from=2026-01-01 alone
+        // produces an open-ended range starting that day.
+        const effectiveFrom = (from_date as string) || (to_date ? null : today);
+        const effectiveTo = (to_date as string) || (from_date ? null : today);
 
         // QA scope: lock the agent list down too so the per-agent rollups
         // can't reference agents outside the assigned departments.
         const qaScope = await buildQAScopeClause(user_id, role, { e: 'e', agentJoin: 'a' });
 
-        // Get all evaluations for today
+        // Build WHERE clause dynamically. We always emit "WHERE 1=1" so the
+        // QA scope clause (which starts with " AND …") composes cleanly.
+        const whereParams: any[] = [];
+        let whereClause = "WHERE 1=1";
+        if (effectiveFrom) { whereClause += " AND e.date >= ?"; whereParams.push(effectiveFrom); }
+        if (effectiveTo) { whereClause += " AND e.date <= ?"; whereParams.push(effectiveTo); }
+        if (agent_id && agent_id !== 'all') {
+          whereClause += " AND e.agent_id = ?";
+          whereParams.push(agent_id);
+        }
+
         const evals = await db.prepare(`
           SELECT e.*, a.display_name as agent_name
           FROM evaluations e
           JOIN users a ON e.agent_id = a.id
-          WHERE e.date = ? ${qaScope.clause}
-        `).all(today, ...qaScope.params) as any[];
+          ${whereClause} ${qaScope.clause}
+        `).all(...whereParams, ...qaScope.params) as any[];
 
         // Get all evaluation questions for mapping
         const qSettings = await db.prepare("SELECT id, label_en FROM form_settings WHERE field_type = 'eval_question'").all() as any[];
