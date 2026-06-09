@@ -555,34 +555,6 @@ export default function EvaluationForm() {
               ))}
             </select>
           </div>
-          <div className="space-y-3">
-            <label className="text-[9px] font-black text-zinc-400 dark:text-zinc-600 uppercase tracking-widest block">Call Direction</label>
-            <select 
-              value={formData.call_direction}
-              disabled={isReadOnly}
-              onChange={(e) => setFormData({...formData, call_direction: e.target.value})}
-              className="w-full bg-white dark:bg-zinc-900 border border-zinc-100 dark:border-zinc-800 rounded-xl px-4 py-3 text-xs text-zinc-800 dark:text-white outline-none"
-            >
-              <option value="">Select Direction</option>
-              {formOptions.call_direction.map((opt: any) => (
-                <option key={opt.id || opt.value} value={opt.value}>{opt.label}</option>
-              ))}
-            </select>
-          </div>
-          <div className="space-y-3">
-            <label className="text-[9px] font-black text-zinc-400 dark:text-zinc-600 uppercase tracking-widest block">Call Category</label>
-            <select 
-              value={formData.call_category}
-              disabled={isReadOnly}
-              onChange={(e) => setFormData({...formData, call_category: e.target.value})}
-              className="w-full bg-white dark:bg-zinc-900 border border-zinc-100 dark:border-zinc-800 rounded-xl px-4 py-3 text-xs text-zinc-800 dark:text-white outline-none"
-            >
-              <option value="">Select Category</option>
-              {formOptions.call_category.map((opt: any) => (
-                <option key={opt.id || opt.value} value={opt.value}>{opt.label}</option>
-              ))}
-            </select>
-          </div>
           <div className="space-y-3 md:col-span-1">
             <label className="text-[9px] font-black text-zinc-400 dark:text-zinc-600 uppercase tracking-widest block">Call Duration</label>
             <input 
