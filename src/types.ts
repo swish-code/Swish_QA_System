@@ -9,6 +9,10 @@ export interface User {
   department: Department;
   tl_id?: number | null;
   status: 'active' | 'inactive';
+  /** QA scope — list of department names this QA may view (deny-by-default if empty). */
+  allowed_departments?: string[];
+  /** QA scope — list of brand values this QA may view (deny-by-default if empty). */
+  allowed_brands?: string[];
 }
 
 export interface FormConfig {

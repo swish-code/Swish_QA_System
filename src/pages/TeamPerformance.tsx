@@ -20,7 +20,7 @@ export default function TeamPerformance() {
   useEffect(() => {
     const fetchStats = async () => {
       try {
-        const res = await fetch(`/api/stats/team?role=${user?.role}&id=${user?.id}&department=${user?.department}`);
+        const res = await fetch(`/api/stats/team?role=${user?.role}&id=${user?.id}&user_id=${user?.id}&department=${user?.department}`);
         const data = await res.json();
         setStats(data);
       } catch (err) {

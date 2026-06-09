@@ -31,7 +31,7 @@ export default function LOBDashboard() {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/stats/lob?department=${department}&from_date=${dateRange.from}&to_date=${dateRange.to}`);
+      const res = await fetch(`/api/stats/lob?department=${department}&from_date=${dateRange.from}&to_date=${dateRange.to}&user_id=${user?.id || ''}&role=${user?.role || ''}`);
       if (!res.ok) throw new Error('LOB data fetch failed');
       const result = await res.json();
       setData(result);

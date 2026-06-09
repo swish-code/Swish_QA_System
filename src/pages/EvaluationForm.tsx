@@ -198,6 +198,14 @@ export default function EvaluationForm() {
         }
       });
 
+      // QA scope — strip brands this user isn't allowed to evaluate. The
+      // server enforces the same rule on submit; this just keeps the UI
+      // honest. Empty allowed list = no brands shown.
+      if (user?.role === 'qa') {
+        const allowed = (user as any).allowed_brands || [];
+        options.brand = options.brand.filter((b: any) => allowed.includes(b.value));
+      }
+
       setFormOptions(options);
 
       // Set defaults for new evaluations
@@ -229,7 +237,16 @@ export default function EvaluationForm() {
         if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
         return res.json();
       })
-      .then(data => setAgents(data.filter((u: UserType) => u.role === 'agent')))
+      .then(data => {
+        // QA scope: filter agents down to those whose department is in the
+        // caller's allowed list. Server still enforces, this just keeps the
+        // dropdown honest.
+        const allowedDeps: string[] = user?.role === 'qa' ? ((user as any).allowed_departments || []) : [];
+        const filtered = data
+          .filter((u: UserType) => u.role === 'agent')
+          .filter((u: UserType) => user?.role !== 'qa' || allowedDeps.includes(u.department));
+        setAgents(filtered);
+      })
       .catch(err => console.error("Error fetching users:", err));
     
     if (id) {

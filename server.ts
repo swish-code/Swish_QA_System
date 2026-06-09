@@ -172,6 +172,11 @@ async function startServer() {
     try { await db.exec("ALTER TABLE escalation_logs ADD COLUMN IF NOT EXISTS old_score REAL"); } catch(e) {}
     try { await db.exec("ALTER TABLE escalation_logs ADD COLUMN IF NOT EXISTS new_score REAL"); } catch(e) {}
 
+    // QA scope columns — JSON arrays of allowed brand values and department names.
+    // NULL / empty → QA sees nothing (deny-by-default).
+    try { await db.exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS allowed_departments TEXT"); } catch(e) {}
+    try { await db.exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS allowed_brands TEXT"); } catch(e) {}
+
     // Seed initial form settings if empty or missing evaluation criteria
     try {
       const settingsCount = (await db.prepare("SELECT COUNT(*) as count FROM form_settings").get() as any).count;
@@ -425,6 +430,57 @@ async function startServer() {
       next();
     });
 
+    // -----------------------------------------------------------------
+    // QA scope helpers — every endpoint that lists evaluations/stats
+    // funnels through these to enforce per-user department + brand
+    // visibility. A QA whose arrays are empty sees nothing.
+    // -----------------------------------------------------------------
+    const parseJsonArray = (v: any): string[] => {
+      if (!v) return [];
+      if (Array.isArray(v)) return v.map(String);
+      try {
+        const parsed = JSON.parse(v);
+        return Array.isArray(parsed) ? parsed.map(String) : [];
+      } catch { return []; }
+    };
+
+    const getQAScope = async (userId: any): Promise<{ departments: string[]; brands: string[] } | null> => {
+      if (!userId) return null;
+      const u = await db.prepare("SELECT role, allowed_departments, allowed_brands FROM users WHERE id = ?").get(userId) as any;
+      if (!u || u.role !== 'qa') return null;
+      return {
+        departments: parseJsonArray(u.allowed_departments),
+        brands: parseJsonArray(u.allowed_brands),
+      };
+    };
+
+    /**
+     * Returns a SQL snippet + params that restricts an evaluations query to
+     * a QA's allowed scope. `aliases.e` is the evaluations table alias and
+     * `aliases.agentJoin` is the joined users table alias (for department).
+     *
+     *  - returns { clause: '', params: [] } if the caller isn't a QA
+     *  - returns a clause that matches NOTHING if the QA has empty scope,
+     *    so a misconfigured account stays blocked instead of leaking data.
+     */
+    const buildQAScopeClause = async (
+      userId: any,
+      role: any,
+      aliases: { e: string; agentJoin: string }
+    ): Promise<{ clause: string; params: any[] }> => {
+      if (role !== 'qa') return { clause: '', params: [] };
+      const scope = await getQAScope(userId);
+      if (!scope) return { clause: '', params: [] };
+      // Deny-by-default: empty arrays → no rows match.
+      if (scope.departments.length === 0 || scope.brands.length === 0) {
+        return { clause: ' AND 1=0 ', params: [] };
+      }
+      const brandPh = scope.brands.map(() => '?').join(',');
+      const depPh = scope.departments.map(() => '?').join(',');
+      const clause = ` AND ${aliases.e}.brand IN (${brandPh}) AND ${aliases.agentJoin}.department IN (${depPh}) `;
+      return { clause, params: [...scope.brands, ...scope.departments] };
+    };
+
     // Health check
     app.get("/api/health", async (req, res) => {
       try {
@@ -443,24 +499,89 @@ async function startServer() {
         return res.status(401).json({ error: "Invalid credentials" });
       }
       const token = jwt.sign({ id: user.id, role: user.role }, JWT_SECRET);
-      res.json({ token, user: { id: user.id, display_name: user.display_name, role: user.role, department: user.department } });
+      res.json({
+        token,
+        user: {
+          id: user.id,
+          display_name: user.display_name,
+          role: user.role,
+          department: user.department,
+          allowed_departments: parseJsonArray(user.allowed_departments),
+          allowed_brands: parseJsonArray(user.allowed_brands),
+        }
+      });
     });
 
     // Users Management
     app.get("/api/users", async (req, res) => {
-      const users = await db.prepare("SELECT id, display_name, username, role, department, tl_id FROM users").all();
-      res.json(users);
+      const users = await db.prepare(
+        "SELECT id, display_name, username, role, department, tl_id, allowed_departments, allowed_brands FROM users"
+      ).all() as any[];
+      // Parse JSON columns so the client gets real arrays.
+      res.json(users.map(u => ({
+        ...u,
+        allowed_departments: parseJsonArray(u.allowed_departments),
+        allowed_brands: parseJsonArray(u.allowed_brands),
+      })));
     });
 
     app.post("/api/users", async (req, res) => {
-      const { display_name, username, password, role, department, tl_id } = req.body;
+      const { display_name, username, password, role, department, tl_id, allowed_departments, allowed_brands } = req.body;
       const hashedPassword = bcrypt.hashSync(password, 10);
+      // Only QAs store scope arrays. Other roles get NULL so existing visibility
+      // rules (supervisor/tl/agent) are untouched.
+      const depsJson = role === 'qa' ? JSON.stringify(Array.isArray(allowed_departments) ? allowed_departments : []) : null;
+      const brandsJson = role === 'qa' ? JSON.stringify(Array.isArray(allowed_brands) ? allowed_brands : []) : null;
       try {
-        await db.prepare("INSERT INTO users (display_name, username, password, role, department, tl_id) VALUES (?, ?, ?, ?, ?, ?)")
-          .run(display_name, username, hashedPassword, role, department, tl_id || null);
+        await db.prepare(
+          "INSERT INTO users (display_name, username, password, role, department, tl_id, allowed_departments, allowed_brands) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        ).run(display_name, username, hashedPassword, role, department, tl_id || null, depsJson, brandsJson);
         res.json({ success: true });
       } catch (e) {
         res.status(400).json({ error: "Username already exists" });
+      }
+    });
+
+    app.put("/api/users/:id", async (req, res) => {
+      try {
+        const { display_name, username, password, role, department, tl_id, allowed_departments, allowed_brands } = req.body;
+        const userId = req.params.id;
+
+        const existing = await db.prepare("SELECT id FROM users WHERE id = ?").get(userId) as any;
+        if (!existing) return res.status(404).json({ error: "User not found" });
+
+        const depsJson = role === 'qa' ? JSON.stringify(Array.isArray(allowed_departments) ? allowed_departments : []) : null;
+        const brandsJson = role === 'qa' ? JSON.stringify(Array.isArray(allowed_brands) ? allowed_brands : []) : null;
+
+        if (password && password.length > 0) {
+          const hashedPassword = bcrypt.hashSync(password, 10);
+          await db.prepare(`
+            UPDATE users
+            SET display_name = ?, username = ?, password = ?, role = ?, department = ?, tl_id = ?,
+                allowed_departments = ?, allowed_brands = ?
+            WHERE id = ?
+          `).run(display_name, username, hashedPassword, role, department, tl_id || null, depsJson, brandsJson, userId);
+        } else {
+          await db.prepare(`
+            UPDATE users
+            SET display_name = ?, username = ?, role = ?, department = ?, tl_id = ?,
+                allowed_departments = ?, allowed_brands = ?
+            WHERE id = ?
+          `).run(display_name, username, role, department, tl_id || null, depsJson, brandsJson, userId);
+        }
+        res.json({ success: true });
+      } catch (e: any) {
+        console.error("/api/users PUT failed:", e);
+        res.status(500).json({ error: e.message || "Failed to update user" });
+      }
+    });
+
+    app.delete("/api/users/:id", async (req, res) => {
+      try {
+        await db.prepare("DELETE FROM users WHERE id = ?").run(req.params.id);
+        res.json({ success: true });
+      } catch (e: any) {
+        res.status(500).json({ error: e.message || "Failed to delete user" });
       }
     });
 
@@ -506,7 +627,13 @@ async function startServer() {
         baseQuery += " AND a.tl_id = ?";
         params.push(user_id);
       }
-      // qa & supervisor: no additional filter — they see every evaluation in every state.
+
+      // QA scope enforcement — restricts to assigned brands + departments.
+      // Empty scope = no rows match (deny-by-default).
+      const qaScope = await buildQAScopeClause(user_id, role, { e: 'e', agentJoin: 'a' });
+      baseQuery += qaScope.clause;
+      params.push(...qaScope.params);
+      // supervisor: no additional filter — they see every evaluation in every state.
 
       if (agent_id && agent_id !== 'all') {
         baseQuery += " AND e.agent_id = ?";
@@ -1429,14 +1556,35 @@ async function startServer() {
 
     // Stats & Analytics
     app.get("/api/stats/team", async (req, res) => {
-      const { role, id, department } = req.query;
+      const { role, id, department, user_id } = req.query;
 
-      let agentsQuery = "SELECT id, display_name FROM users WHERE role = 'agent'";
-      let evalsQuery = "SELECT * FROM evaluations";
+      let agentsQuery = "SELECT id, display_name, department FROM users WHERE role = 'agent'";
+      // Join to agents so we can apply the QA scope on a.department.
+      let evalsQuery = "SELECT e.* FROM evaluations e JOIN users a ON e.agent_id = a.id WHERE 1=1";
       let coachingQuery = "SELECT * FROM coaching_sessions";
+      const evalsParams: any[] = [];
+      const agentsParams: any[] = [];
 
-      const agents = await db.prepare(agentsQuery).all() as any[];
-      const evals = await db.prepare(evalsQuery).all() as any[];
+      // QA scope: lock down both the agent list and the eval list.
+      const callerId = user_id || id;
+      const qaScope = await buildQAScopeClause(callerId, role, { e: 'e', agentJoin: 'a' });
+      evalsQuery += qaScope.clause;
+      evalsParams.push(...qaScope.params);
+      if (role === 'qa') {
+        const scope = await getQAScope(callerId);
+        if (scope) {
+          if (scope.departments.length === 0 || scope.brands.length === 0) {
+            agentsQuery += " AND 1=0";
+          } else {
+            const ph = scope.departments.map(() => '?').join(',');
+            agentsQuery += ` AND department IN (${ph})`;
+            agentsParams.push(...scope.departments);
+          }
+        }
+      }
+
+      const agents = await db.prepare(agentsQuery).all(...agentsParams) as any[];
+      const evals = await db.prepare(evalsQuery).all(...evalsParams) as any[];
       const coaching = await db.prepare(coachingQuery).all() as any[];
       
       // Calculate scores per agent
@@ -1471,16 +1619,18 @@ async function startServer() {
     // Stats & Analytics
     app.get("/api/stats/lob", async (req, res) => {
       try {
-        const { department, from_date, to_date } = req.query;
-        
+        const { department, from_date, to_date, user_id, role } = req.query;
+
         let agentsQuery = "SELECT id, display_name, department FROM users WHERE role = 'agent'";
         let evalsQuery = "SELECT e.*, a.department, a.display_name as agent_name FROM evaluations e JOIN users a ON e.agent_id = a.id WHERE 1=1";
         let params: any[] = [];
+        let agentsParams: any[] = [];
 
         if (department && department !== 'all') {
           agentsQuery += " AND department = ?";
           evalsQuery += " AND a.department = ?";
           params.push(department);
+          agentsParams.push(department);
         }
 
         if (from_date) {
@@ -1493,7 +1643,25 @@ async function startServer() {
           params.push(to_date);
         }
 
-        const agents = await db.prepare(agentsQuery).all(...(department && department !== 'all' ? [department] : [])) as any[];
+        // QA scope: even when an explicit department filter is requested,
+        // the QA can only ever see their assigned scope.
+        const qaScope = await buildQAScopeClause(user_id, role, { e: 'e', agentJoin: 'a' });
+        evalsQuery += qaScope.clause;
+        params.push(...qaScope.params);
+        if (role === 'qa') {
+          const scope = await getQAScope(user_id);
+          if (scope) {
+            if (scope.departments.length === 0 || scope.brands.length === 0) {
+              agentsQuery += " AND 1=0";
+            } else {
+              const ph = scope.departments.map(() => '?').join(',');
+              agentsQuery += ` AND department IN (${ph})`;
+              agentsParams.push(...scope.departments);
+            }
+          }
+        }
+
+        const agents = await db.prepare(agentsQuery).all(...agentsParams) as any[];
         const evals = await db.prepare(evalsQuery).all(...params) as any[];
 
         // 1. Top Performers
@@ -1576,15 +1744,20 @@ async function startServer() {
     // Stats & Analytics
     app.get("/api/stats/drop-point", async (req, res) => {
       try {
+        const { user_id, role } = req.query;
         const today = new Date().toISOString().split('T')[0];
+
+        // QA scope: lock the agent list down too so the per-agent rollups
+        // can't reference agents outside the assigned departments.
+        const qaScope = await buildQAScopeClause(user_id, role, { e: 'e', agentJoin: 'a' });
 
         // Get all evaluations for today
         const evals = await db.prepare(`
           SELECT e.*, a.display_name as agent_name
           FROM evaluations e
           JOIN users a ON e.agent_id = a.id
-          WHERE e.date = ?
-        `).all(today) as any[];
+          WHERE e.date = ? ${qaScope.clause}
+        `).all(today, ...qaScope.params) as any[];
 
         // Get all evaluation questions for mapping
         const qSettings = await db.prepare("SELECT id, label_en FROM form_settings WHERE field_type = 'eval_question'").all() as any[];
@@ -1666,21 +1839,42 @@ async function startServer() {
     app.get("/api/stats/dashboard", async (req, res) => {
       try {
         const { user_id, role } = req.query;
-        
-        let evalsQuery = "SELECT * FROM evaluations";
-        let agentsQuery = "SELECT id, display_name FROM users WHERE role = 'agent'";
+
+        // Build a unified base query joining evaluations to the agent so we
+        // can apply the QA scope filter consistently (it joins on a.department).
+        let evalsQuery = "SELECT e.* FROM evaluations e JOIN users a ON e.agent_id = a.id WHERE 1=1";
+        let agentsQuery = "SELECT id, display_name, department FROM users WHERE role = 'agent'";
         let params: any[] = [];
-        
+
         if (role === 'agent') {
-          evalsQuery = "SELECT * FROM evaluations WHERE agent_id = ?";
+          evalsQuery += " AND e.agent_id = ?";
           params.push(user_id);
         } else if (role === 'tl') {
-          evalsQuery = "SELECT e.* FROM evaluations e JOIN users a ON e.agent_id = a.id WHERE a.tl_id = ?";
+          evalsQuery += " AND a.tl_id = ?";
           params.push(user_id);
         }
 
+        // QA: restrict to assigned brands + departments. Also restrict the
+        // active-agents list to the same department scope so headline counts
+        // line up with what the QA can actually audit.
+        const qaScope = await buildQAScopeClause(user_id, role, { e: 'e', agentJoin: 'a' });
+        evalsQuery += qaScope.clause;
+        params.push(...qaScope.params);
+
+        let agentParams: any[] = [];
+        if (role === 'qa') {
+          const scope = await getQAScope(user_id);
+          if (scope && (scope.departments.length === 0 || scope.brands.length === 0)) {
+            agentsQuery += " AND 1=0";
+          } else if (scope && scope.departments.length > 0) {
+            const ph = scope.departments.map(() => '?').join(',');
+            agentsQuery += ` AND department IN (${ph})`;
+            agentParams.push(...scope.departments);
+          }
+        }
+
         const evals = await db.prepare(evalsQuery).all(...params) as any[];
-        const agents = await db.prepare(agentsQuery).all() as any[];
+        const agents = await db.prepare(agentsQuery).all(...agentParams) as any[];
         
         const avgScore = evals.length > 0 
           ? evals.reduce((acc, curr) => acc + curr.final_score, 0) / evals.length 
@@ -1793,6 +1987,22 @@ async function startServer() {
           joinParams.push(effectiveEnd);
         }
 
+        // When the caller is a QA, only count evaluations that fall inside
+        // their assigned scope — same rules as everywhere else.
+        if (restrictToSelf) {
+          const scope = await getQAScope(user_id);
+          if (scope) {
+            if (scope.brands.length === 0 || scope.departments.length === 0) {
+              dateJoinConds.push("1=0");
+            } else {
+              dateJoinConds.push(`e.brand IN (${scope.brands.map(() => '?').join(',')})`);
+              joinParams.push(...scope.brands);
+              dateJoinConds.push(`EXISTS (SELECT 1 FROM users a2 WHERE a2.id = e.agent_id AND a2.department IN (${scope.departments.map(() => '?').join(',')}))`);
+              joinParams.push(...scope.departments);
+            }
+          }
+        }
+
         const userFilter = restrictToSelf ? "AND u.id = ?" : "";
         const userFilterParams = restrictToSelf ? [user_id] : [];
 
@@ -1828,18 +2038,23 @@ async function startServer() {
     // Advanced Quality Analysis Endpoint / Multi-dimensional metrics
     app.get("/api/stats/analysis", async (req, res) => {
       try {
-        const { start_date, end_date, brand, call_type, agent_id, qa_id, status } = req.query;
+        const { start_date, end_date, brand, call_type, agent_id, qa_id, status, user_id, role } = req.query;
 
         let query = `
-          SELECT e.*, 
-                 a.display_name as agent_name, 
-                 q.display_name as qa_name 
-          FROM evaluations e 
-          LEFT JOIN users a ON e.agent_id = a.id 
-          LEFT JOIN users q ON e.qa_id = q.id 
+          SELECT e.*,
+                 a.display_name as agent_name,
+                 q.display_name as qa_name
+          FROM evaluations e
+          LEFT JOIN users a ON e.agent_id = a.id
+          LEFT JOIN users q ON e.qa_id = q.id
           WHERE 1=1
         `;
         const params: any[] = [];
+
+        // QA scope — keep analysis honest about what this user can see.
+        const qaScope = await buildQAScopeClause(user_id, role, { e: 'e', agentJoin: 'a' });
+        query += qaScope.clause;
+        params.push(...qaScope.params);
 
         if (start_date) {
           query += " AND e.date >= ?";

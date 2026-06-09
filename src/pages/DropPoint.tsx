@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import { useAuth } from '../context/AuthContext';
 import { 
   BarChart3, 
   Search, 
@@ -24,6 +25,7 @@ interface AgentReport {
 }
 
 export default function DropPoint() {
+  const { user } = useAuth();
   const [reports, setReports] = useState<AgentReport[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -36,7 +38,8 @@ export default function DropPoint() {
   const fetchReport = async () => {
     setLoading(true);
     try {
-      const response = await fetch('/api/stats/drop-point');
+      const params = new URLSearchParams({ user_id: String(user?.id || ''), role: user?.role || '' });
+      const response = await fetch(`/api/stats/drop-point?${params.toString()}`);
       const data = await response.json();
       setReports(data);
     } catch (error) {

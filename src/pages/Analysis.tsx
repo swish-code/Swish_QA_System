@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { 
+import { useAuth } from '../context/AuthContext';
+import {
   TrendingUp, 
   BarChart3, 
   Award, 
@@ -97,6 +98,7 @@ interface FiltersOptions {
 }
 
 export default function Analysis() {
+  const { user } = useAuth();
   // Filters state
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
@@ -154,7 +156,10 @@ export default function Analysis() {
         call_type: callType,
         agent_id: agentId,
         qa_id: qaId,
-        status
+        status,
+        // Caller context so the server can enforce QA scope.
+        user_id: String(user?.id || ''),
+        role: user?.role || ''
       });
 
       const res = await fetch(`/api/stats/analysis?${params.toString()}`);
