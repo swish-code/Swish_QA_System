@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { NavLink, useNavigate } from 'react-router-dom';
 import StatCard from '../components/StatCard';
+import QACallsCard from '../components/QACallsCard';
 import { motion } from 'motion/react';
 import { 
   TrendingUp, 
@@ -217,6 +218,9 @@ export default function Dashboard() {
       </div>
 
 
+
+      {/* QA Productivity — calls registered per Quality user. Hidden from Agents. */}
+      {user?.role !== 'agent' && <QACallsCard />}
 
       {user?.role === 'agent' && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6 lg:gap-8">

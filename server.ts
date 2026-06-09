@@ -1503,6 +1503,86 @@ async function startServer() {
       }
     });
 
+    // QA Productivity — how many calls each QA logged within a date window.
+    //   start_date / end_date  (YYYY-MM-DD, optional)
+    //     - both missing → all time
+    //     - only start_date → that single day
+    //     - both present → inclusive range
+    //   user_id, role          (the caller; QAs only see themselves)
+    app.get("/api/stats/qa-calls", async (req, res) => {
+      try {
+        const { start_date, end_date, user_id, role } = req.query;
+
+        // Build the WHERE on the `date` column (TEXT, YYYY-MM-DD — works as a string compare).
+        const conds: string[] = [];
+        const params: any[] = [];
+        if (start_date) {
+          conds.push("e.date >= ?");
+          params.push(start_date);
+        }
+        // When only start_date is provided, treat it as a single day.
+        const effectiveEnd = end_date || start_date;
+        if (effectiveEnd) {
+          conds.push("e.date <= ?");
+          params.push(effectiveEnd);
+        }
+
+        // A QA only ever sees their own row, regardless of who else exists.
+        const restrictToSelf = role === 'qa';
+        if (restrictToSelf) {
+          conds.push("u.id = ?");
+          params.push(user_id);
+        }
+
+        const whereClause = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
+
+        // LEFT JOIN evaluations on qa_id so QAs with zero calls still show up
+        // for supervisors/TLs (otherwise the section quietly hides idle users).
+        // The date filter is moved into the JOIN's ON clause so a date window
+        // with zero matches still surfaces the user with count=0.
+        const dateJoinConds: string[] = ["e.qa_id = u.id"];
+        const joinParams: any[] = [];
+        if (start_date) {
+          dateJoinConds.push("e.date >= ?");
+          joinParams.push(start_date);
+        }
+        if (effectiveEnd) {
+          dateJoinConds.push("e.date <= ?");
+          joinParams.push(effectiveEnd);
+        }
+
+        const userFilter = restrictToSelf ? "AND u.id = ?" : "";
+        const userFilterParams = restrictToSelf ? [user_id] : [];
+
+        const rows = await db.prepare(`
+          SELECT u.id, u.display_name, u.username,
+                 COUNT(e.id) AS call_count
+          FROM users u
+          LEFT JOIN evaluations e ON ${dateJoinConds.join(' AND ')}
+          WHERE u.role = 'qa' ${userFilter}
+          GROUP BY u.id, u.display_name, u.username
+          ORDER BY call_count DESC, u.display_name ASC
+        `).all(...joinParams, ...userFilterParams) as any[];
+
+        const total = rows.reduce((s, r) => s + Number(r.call_count || 0), 0);
+
+        res.json({
+          start_date: start_date || null,
+          end_date: effectiveEnd || null,
+          total_calls: total,
+          qas: rows.map(r => ({
+            id: r.id,
+            display_name: r.display_name,
+            username: r.username,
+            call_count: Number(r.call_count || 0),
+          })),
+        });
+      } catch (e: any) {
+        console.error("/api/stats/qa-calls failed:", e);
+        res.status(500).json({ error: e.message });
+      }
+    });
+
     // Advanced Quality Analysis Endpoint / Multi-dimensional metrics
     app.get("/api/stats/analysis", async (req, res) => {
       try {
