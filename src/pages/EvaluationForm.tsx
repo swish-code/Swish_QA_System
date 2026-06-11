@@ -33,6 +33,24 @@ const COMMON_ISSUES = [
   'System Navigation Error', 'Confirmation Step Missed', 'Policy Compliance Issue'
 ];
 
+// Reasons a QA can attach to a manual "Mark as Critical" zero-score override.
+// Shown in a modal when the toggle is flipped on — the QA must pick at least
+// one before the score is locked at 0.
+const CRITICAL_FAILURE_REASONS = [
+  'Misinformation',
+  'Call Disconnect',
+  'Privacy Breach',
+  'No Escalation',
+  'Wrong Order',
+  'Abusive Language',
+  'False Promise',
+  'No Documentation',
+  'Record Falsification',
+  'Critical SOP Violation',
+  'Customer Neglect',
+  'Unapproved Commitment',
+];
+
 export default function EvaluationForm() {
   const { user } = useAuth();
   const { id } = useParams();
@@ -43,6 +61,10 @@ export default function EvaluationForm() {
   const [escalationHistory, setEscalationHistory] = useState<any[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSavingDraft, setIsSavingDraft] = useState(false);
+  // Controls the Critical Failure reason picker modal.
+  const [showCriticalModal, setShowCriticalModal] = useState(false);
+  // Draft selection inside the modal — only committed to formData on confirm.
+  const [criticalReasonDraft, setCriticalReasonDraft] = useState<string[]>([]);
   // Tracks the draft this form is currently bound to. When set, Save as Draft
   // updates the existing record instead of creating a new one, and a successful
   // submit marks the draft 'completed' server-side.
@@ -74,6 +96,9 @@ export default function EvaluationForm() {
     // When the QA flips this, the score is forced to 0 regardless of the
     // pass/fail toggles. Used for "Critical Failure" overrides.
     force_zero_score: false,
+    // QA-selected reasons that justify the forced zero (multi-select).
+    // Empty when force_zero_score is false.
+    critical_failure_reasons: [] as string[],
     feedback: {
       general: '',
       internal: '',
@@ -518,6 +543,138 @@ export default function EvaluationForm() {
     }
   };
 
+  // --------------------------------------------------------------
+  // Critical Failure reason picker — must pick ≥1 reason to confirm
+  // --------------------------------------------------------------
+  const toggleCriticalReason = (r: string) => {
+    setCriticalReasonDraft(prev =>
+      prev.includes(r) ? prev.filter(x => x !== r) : [...prev, r]
+    );
+  };
+
+  const confirmCriticalReasons = () => {
+    setFormData((prev: any) => ({
+      ...prev,
+      force_zero_score: true,
+      critical_failure_reasons: criticalReasonDraft,
+    }));
+    setShowCriticalModal(false);
+  };
+
+  const clearCriticalOverride = () => {
+    setFormData((prev: any) => ({
+      ...prev,
+      force_zero_score: false,
+      critical_failure_reasons: [],
+    }));
+    setCriticalReasonDraft([]);
+    setShowCriticalModal(false);
+  };
+
+  const criticalModal = showCriticalModal ? createPortal(
+    <div
+      className="fixed inset-0 z-[110] flex items-center justify-center p-4 sm:p-6 bg-black/70 backdrop-blur-md overflow-y-auto"
+      onClick={() => setShowCriticalModal(false)}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-[2rem] w-full max-w-lg shadow-2xl my-auto overflow-hidden"
+      >
+        <div className="h-1 w-full bg-gradient-to-r from-transparent via-rose-500 to-transparent" />
+
+        {/* Header */}
+        <div className="p-6 border-b border-zinc-100 dark:border-zinc-900 flex items-start justify-between gap-3">
+          <div className="flex items-start gap-3">
+            <div className="p-2.5 rounded-2xl bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/30">
+              <AlertCircle size={18} />
+            </div>
+            <div>
+              <h3 className="text-lg font-black text-zinc-900 dark:text-white uppercase tracking-tighter leading-tight">Critical Failure</h3>
+              <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 dark:text-zinc-500 mt-1">
+                Pick at least one reason to force the score to 0
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => setShowCriticalModal(false)}
+            className="p-2 rounded-lg text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-900 hover:text-rose-500 transition-colors"
+            aria-label="Close"
+          >
+            <XCircle size={18} />
+          </button>
+        </div>
+
+        {/* Reason checkboxes */}
+        <div className="p-6 max-h-[50vh] overflow-y-auto">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {CRITICAL_FAILURE_REASONS.map((reason) => {
+              const checked = criticalReasonDraft.includes(reason);
+              return (
+                <button
+                  key={reason}
+                  type="button"
+                  onClick={() => toggleCriticalReason(reason)}
+                  className={`flex items-center gap-2 p-3 rounded-xl border text-left transition-all ${
+                    checked
+                      ? 'bg-rose-500/10 border-rose-500/40 text-rose-700 dark:text-rose-300'
+                      : 'bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800 text-zinc-700 dark:text-zinc-300 hover:border-rose-400/40 hover:bg-rose-50/50 dark:hover:bg-rose-950/20'
+                  }`}
+                >
+                  <div className={`w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 transition-all ${
+                    checked
+                      ? 'bg-rose-600 border-rose-600'
+                      : 'bg-transparent border-zinc-300 dark:border-zinc-700'
+                  }`}>
+                    {checked && <Check size={10} className="text-white" />}
+                  </div>
+                  <span className="text-xs font-bold">{reason}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          <p className="text-[10px] font-bold text-zinc-400 dark:text-zinc-600 mt-4 italic">
+            Selected reasons are saved with the evaluation and shown to the agent and TL.
+          </p>
+        </div>
+
+        {/* Footer */}
+        <div className="p-6 pt-4 border-t border-zinc-100 dark:border-zinc-900 flex flex-col-reverse sm:flex-row sm:items-center sm:justify-between gap-3">
+          {/* Remove the override entirely (only meaningful when currently ON) */}
+          {formData.force_zero_score ? (
+            <button
+              type="button"
+              onClick={clearCriticalOverride}
+              className="px-4 py-2.5 rounded-xl bg-zinc-100 dark:bg-zinc-900 hover:bg-zinc-200 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300 font-black text-[10px] uppercase tracking-widest transition-colors"
+            >
+              Remove Override
+            </button>
+          ) : <span />}
+
+          <div className="flex gap-3">
+            <button
+              type="button"
+              onClick={() => setShowCriticalModal(false)}
+              className="px-4 py-2.5 rounded-xl bg-zinc-100 dark:bg-zinc-900 hover:bg-zinc-200 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300 font-black text-[10px] uppercase tracking-widest transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={confirmCriticalReasons}
+              disabled={criticalReasonDraft.length === 0}
+              className="px-5 py-2.5 rounded-xl bg-rose-600 text-white font-black text-[10px] uppercase tracking-widest shadow-lg shadow-rose-500/20 hover:bg-rose-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+            >
+              <AlertCircle size={12} />
+              Apply Zero Score ({criticalReasonDraft.length})
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>,
+    document.body
+  ) : null;
+
   const actionModal = showActionModal ? createPortal(
     <div
       className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6 bg-black/70 backdrop-blur-md overflow-y-auto"
@@ -580,6 +737,7 @@ export default function EvaluationForm() {
   return (
     <div className="max-w-[1200px] mx-auto pb-20 space-y-12 font-sans bg-white/95 dark:bg-black/95 p-4 md:p-8 rounded-[3rem] border border-zinc-200 dark:border-zinc-800/40 shadow-sm dark:shadow-2xl">
       {actionModal}
+      {criticalModal}
 
       {/* Header Block */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center bg-white dark:bg-zinc-950/80 p-4 sm:p-6 lg:p-8 rounded-[2rem] border border-zinc-100 dark:border-zinc-800 relative shadow-sm dark:shadow-inner overflow-hidden">
@@ -604,9 +762,14 @@ export default function EvaluationForm() {
           <button
             type="button"
             disabled={isReadOnly}
-            onClick={() => setFormData((prev: any) => ({ ...prev, force_zero_score: !prev.force_zero_score }))}
+            onClick={() => {
+              // Prime the modal's draft with any reasons already saved on
+              // the form so editing keeps the prior selections.
+              setCriticalReasonDraft(formData.critical_failure_reasons || []);
+              setShowCriticalModal(true);
+            }}
             title={formData.force_zero_score
-              ? 'Critical failure override is ON — click to remove it and use the calculated score'
+              ? 'Critical failure override is ON — click to edit reasons or remove it'
               : 'Force the total score to 0 (Critical Failure override)'}
             className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest border transition-all flex items-center gap-2 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed ${
               formData.force_zero_score
@@ -615,7 +778,7 @@ export default function EvaluationForm() {
             }`}
           >
             <AlertCircle size={14} />
-            {formData.force_zero_score ? 'Critical Failure (Reset)' : 'Mark as Critical (0%)'}
+            {formData.force_zero_score ? 'Critical Failure (Edit)' : 'Mark as Critical (0%)'}
           </button>
 
           <div className="text-right">
@@ -630,9 +793,20 @@ export default function EvaluationForm() {
               </div>
             </div>
             {formData.force_zero_score && (
-              <p className="text-[9px] font-black text-rose-500 uppercase tracking-widest mt-1">
-                Critical Failure override
-              </p>
+              <div className="mt-2 max-w-[280px] ml-auto">
+                <p className="text-[9px] font-black text-rose-500 uppercase tracking-widest mb-1.5">
+                  Critical Failure override
+                </p>
+                {(formData.critical_failure_reasons || []).length > 0 && (
+                  <div className="flex flex-wrap gap-1 justify-end">
+                    {formData.critical_failure_reasons.map((r: string) => (
+                      <span key={r} className="px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wider bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30">
+                        {r}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
             )}
           </div>
         </div>

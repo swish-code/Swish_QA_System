@@ -1446,6 +1446,11 @@ async function startServer() {
         }
 
         const parts: string[] = [];
+        // Manual "Mark as Critical" reasons take pride of place — they're
+        // the QA's explicit zero-score justification.
+        if (evalData?.force_zero_score && Array.isArray(evalData?.critical_failure_reasons) && evalData.critical_failure_reasons.length) {
+          parts.push(`Critical Failure reasons:\n${evalData.critical_failure_reasons.map((r: string) => `• ${r}`).join('\n')}`);
+        }
         if (failedLines.length) {
           parts.push(`Failed items (${failedLines.length}):\n${failedLines.join('\n')}`);
         }

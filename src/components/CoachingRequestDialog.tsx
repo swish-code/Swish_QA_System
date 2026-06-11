@@ -100,6 +100,9 @@ export default function CoachingRequestDialog({ evaluation, tlId, onClose, onSub
 
   const commonIssues: string[] = Array.isArray(data?.common_issues) ? data.common_issues : [];
   const generalNote: string | undefined = data?.feedback?.error_description || data?.feedback?.general;
+  // QA's manual "Mark as Critical" reasons (if any).
+  const criticalReasons: string[] = (data?.force_zero_score && Array.isArray(data?.critical_failure_reasons))
+    ? data.critical_failure_reasons : [];
 
   const handleSubmit = async () => {
     if (!comment.trim()) {
@@ -191,6 +194,22 @@ export default function CoachingRequestDialog({ evaluation, tlId, onClose, onSub
               </div>
             </div>
           </div>
+
+          {/* ---------- Manual Critical Failure reasons (if any) ---------- */}
+          {criticalReasons.length > 0 && (
+            <div>
+              <p className="text-[9px] font-black text-rose-600 dark:text-rose-400 uppercase tracking-widest mb-2 flex items-center gap-1.5">
+                <ShieldAlert size={11} /> Marked as Critical · Score forced to 0
+              </p>
+              <div className="rounded-2xl bg-rose-600/10 border border-rose-500/40 p-3 flex flex-wrap gap-1.5">
+                {criticalReasons.map((r) => (
+                  <span key={r} className="px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-rose-600 text-white">
+                    {r}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* ---------- All failed items from the evaluation ---------- */}
           <div>
