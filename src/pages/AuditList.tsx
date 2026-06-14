@@ -2,12 +2,13 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import CoachingRequestDialog from '../components/CoachingRequestDialog';
 import CoachingDetailsDialog from '../components/CoachingDetailsDialog';
 import { useAuth } from '../context/AuthContext';
-import { 
-  Search, 
-  Filter, 
-  FileText, 
-  Eye, 
+import {
+  Search,
+  Filter,
+  FileText,
+  Eye,
   Download,
+  Mail,
   Calendar,
   User,
   Tag,
@@ -85,6 +86,115 @@ export default function AuditList() {
       .then(data => setAgents(data.filter((u: any) => u.role === 'agent')))
       .catch(console.error);
   }, []);
+
+  // Form-settings question map — used to expand response IDs into real
+  // question labels when building the "send by email" body.
+  const [questionMap, setQuestionMap] = useState<Record<string, { label: string; critical: boolean; weight: number }>>({});
+  useEffect(() => {
+    fetch('/api/settings/form')
+      .then(res => res.ok ? res.json() : Promise.reject())
+      .then((settings: any[]) => {
+        const map: Record<string, { label: string; critical: boolean; weight: number }> = {};
+        for (const s of settings) {
+          if (s.field_type !== 'eval_question') continue;
+          let cfg: any = {};
+          try { cfg = typeof s.value === 'string' ? JSON.parse(s.value) : (s.value || {}); } catch {}
+          map[String(s.id)] = {
+            label: s.label_en || `Question #${s.id}`,
+            critical: !!cfg.critical,
+            weight: Number(cfg.weight) || 0,
+          };
+        }
+        setQuestionMap(map);
+      })
+      .catch(() => {});
+  }, []);
+
+  // Builds a plain-text email body summarising the call. Opens the OS
+  // default mail client via mailto: AND copies the same text to the
+  // clipboard so the QA can paste into webmail if mailto: is blocked.
+  const handleEmailCall = useCallback(async (audit: any) => {
+    const data: any = audit.data || {};
+    const lines: string[] = [];
+    lines.push(`Call Audit #${audit.id}`);
+    lines.push('====================');
+    lines.push('');
+    lines.push(`Agent:           ${audit.agent_name || `#${audit.agent_id}`}`);
+    if (audit.qa_name) lines.push(`Evaluator (QA):  ${audit.qa_name}`);
+    lines.push(`Brand:           ${audit.brand || '—'}`);
+    lines.push(`Call Type:       ${audit.call_type || '—'}`);
+    lines.push(`Call Date:       ${audit.date || '—'}`);
+    if (data.customer_phone) lines.push(`Customer Phone:  ${data.customer_phone}`);
+    if (data.call_duration) lines.push(`Call Duration:   ${data.call_duration}`);
+    lines.push('');
+    lines.push(`Final Score:     ${audit.final_score}%`);
+    lines.push(`Status:          ${audit.status}`);
+    lines.push(`Critical Fail:   ${audit.critical_failure ? 'YES' : 'No'}`);
+
+    // Critical-failure reasons (when QA manually forced the zero).
+    if (data.force_zero_score && Array.isArray(data.critical_failure_reasons) && data.critical_failure_reasons.length) {
+      lines.push('');
+      lines.push(`Marked-as-Critical reasons (${data.critical_failure_reasons.length}):`);
+      data.critical_failure_reasons.forEach((r: string) => lines.push(`  • ${r}`));
+    }
+
+    // Failed evaluation items, resolved against the form-settings map.
+    const responses = data.responses || {};
+    const failedIds = Object.keys(responses).filter(k => responses[k] === 'No');
+    if (failedIds.length) {
+      lines.push('');
+      lines.push(`Failed items (${failedIds.length}):`);
+      failedIds.forEach(qid => {
+        const meta = questionMap[String(qid)];
+        const label = meta?.label || `Question #${qid}`;
+        const tags: string[] = [];
+        if (meta?.weight) tags.push(`-${meta.weight}%`);
+        if (meta?.critical) tags.push('CRITICAL');
+        lines.push(`  • ${label}${tags.length ? ` (${tags.join(' · ')})` : ''}`);
+      });
+    }
+
+    // Common-issue tags.
+    if (Array.isArray(data.common_issues) && data.common_issues.length) {
+      lines.push('');
+      lines.push(`Common Issues:   ${data.common_issues.join(', ')}`);
+    }
+
+    // QA general note / error description.
+    const generalNote = data?.feedback?.error_description || data?.feedback?.general;
+    if (generalNote) {
+      lines.push('');
+      lines.push('QA Note:');
+      lines.push(String(generalNote).trim());
+    }
+
+    // Coaching status if any.
+    if (audit.coaching) {
+      lines.push('');
+      lines.push(`Coaching:        ${audit.coaching.status}`);
+      if (audit.coaching.tl_name) lines.push(`Coached by:      ${audit.coaching.tl_name}`);
+      if (audit.coaching.completed_at) lines.push(`Completed:       ${audit.coaching.completed_at}`);
+    }
+
+    lines.push('');
+    lines.push(`Open in system:  ${window.location.origin}/evaluate/${audit.id}`);
+
+    const body = lines.join('\n');
+    const subject = `Call Audit #${audit.id} — ${audit.agent_name || ''} · ${audit.final_score}%`;
+
+    // Copy to clipboard (best-effort) so the QA can paste into any client.
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(body);
+      }
+    } catch {
+      // Clipboard access can be denied; fall back to mailto: only.
+    }
+
+    // Open the OS default mail client with subject + body pre-filled.
+    const mailto = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    window.location.href = mailto;
+  }, [questionMap]);
 
   useEffect(() => {
     fetchEvaluations(searchParams);
@@ -437,6 +547,15 @@ export default function AuditList() {
                          >
                            <Eye size={16} />
                          </button>
+                         {(user?.role === 'qa' || user?.role === 'supervisor') && (
+                           <button
+                             onClick={(e) => { e.stopPropagation(); handleEmailCall(audit); }}
+                             className="p-2 rounded-lg bg-indigo-500/10 border border-indigo-500/30 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-500 hover:text-white hover:border-indigo-500 transition-all"
+                             title="Email call details — copies to clipboard and opens your mail client"
+                           >
+                             <Mail size={16} />
+                           </button>
+                         )}
                          {user?.role === 'tl' && (
                            <button
                              onClick={(e) => {
