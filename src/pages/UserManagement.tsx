@@ -89,6 +89,19 @@ export default function UserManagement() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    // Role-specific required-scope checks. The server also enforces these
+    // (a TL with no brands sees nothing) — this just gives the admin an
+    // immediate, explicit error instead of a silently-broken account.
+    if (formData.role === 'tl' && formData.allowed_brands.length === 0) {
+      alert('Team Leader users must have at least one assigned brand.');
+      return;
+    }
+    if (formData.role === 'qa' && (formData.allowed_brands.length === 0 || formData.allowed_departments.length === 0)) {
+      alert('QA users must have at least one allowed department AND one allowed brand.');
+      return;
+    }
+
     const payload = { ...formData };
     const url = editingId ? `/api/users/${editingId}` : '/api/users';
     const method = editingId ? 'PUT' : 'POST';
@@ -174,7 +187,7 @@ export default function UserManagement() {
                 <th className="px-10 py-6">Username</th>
                 <th className="px-10 py-6">Role</th>
                 <th className="px-10 py-6">Department</th>
-                <th className="px-10 py-6">QA Scope</th>
+                <th className="px-10 py-6">Access Scope</th>
                 <th className="px-10 py-6 text-right pr-14">Actions</th>
               </tr>
             </thead>
@@ -232,6 +245,14 @@ export default function UserManagement() {
                             <span key={`b-${b}`} className="px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider rounded bg-indigo-500/10 text-indigo-700 dark:text-indigo-400 border border-indigo-500/20">{b}</span>
                           ))}
                         </div>
+                      </div>
+                    ) : u.role === 'tl' ? (
+                      <div className="flex flex-wrap gap-1 max-w-[260px]">
+                        {(u.allowed_brands || []).length === 0 ? (
+                          <span className="text-[9px] font-black uppercase tracking-widest text-rose-500 dark:text-rose-400">No brands</span>
+                        ) : (u.allowed_brands || []).map(b => (
+                          <span key={`tl-b-${b}`} className="px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider rounded bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/20">{b}</span>
+                        ))}
                       </div>
                     ) : (
                       <span className="text-zinc-300 dark:text-zinc-700 text-[10px] font-black uppercase tracking-widest">N/A</span>
@@ -418,7 +439,7 @@ export default function UserManagement() {
                 )}
               </div>
 
-              {/* QA-only scope picker */}
+              {/* QA-only scope picker — departments + brands */}
               {formData.role === 'qa' && (
                 <div className="space-y-6 p-6 rounded-3xl bg-indigo-500/5 border border-indigo-500/20">
                   <div>
@@ -446,6 +467,33 @@ export default function UserManagement() {
                   {(formData.allowed_departments.length === 0 || formData.allowed_brands.length === 0) && (
                     <div className="text-[10px] font-black uppercase tracking-widest text-rose-500 dark:text-rose-400">
                       ⚠ With no departments OR no brands selected, this QA will see nothing.
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* TL-only scope picker — brands only (team comes from agent.tl_id) */}
+              {formData.role === 'tl' && (
+                <div className="space-y-6 p-6 rounded-3xl bg-emerald-500/5 border border-emerald-500/20">
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-[0.3em] text-emerald-600 dark:text-emerald-400 italic">TL Brand Access</p>
+                    <p className="text-[11px] text-zinc-600 dark:text-zinc-400 mt-1">
+                      This Team Leader can only see evaluations whose <b>brand</b> is in the allowed list.
+                      At least one brand is required. The team-membership filter (their direct agents) still applies on top.
+                    </p>
+                  </div>
+
+                  <MultiSelectField
+                    label="Assigned Brands"
+                    placeholder="Select one or more brands…"
+                    options={brands}
+                    value={formData.allowed_brands}
+                    onChange={(v) => setFormData({ ...formData, allowed_brands: v })}
+                  />
+
+                  {formData.allowed_brands.length === 0 && (
+                    <div className="text-[10px] font-black uppercase tracking-widest text-rose-500 dark:text-rose-400">
+                      ⚠ At least one brand is required for a Team Leader.
                     </div>
                   )}
                 </div>

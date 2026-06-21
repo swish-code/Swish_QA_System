@@ -514,30 +514,56 @@ async function startServer() {
     };
 
     /**
+     * TL brand scope — list of brand values this TL is authorized to view.
+     * Returns null for non-TLs so callers can short-circuit cleanly.
+     */
+    const getTLBrandScope = async (userId: any): Promise<string[] | null> => {
+      if (!userId) return null;
+      const u = await db.prepare("SELECT role, allowed_brands FROM users WHERE id = ?").get(userId) as any;
+      if (!u || u.role !== 'tl') return null;
+      return parseJsonArray(u.allowed_brands);
+    };
+
+    /**
      * Returns a SQL snippet + params that restricts an evaluations query to
-     * a QA's allowed scope. `aliases.e` is the evaluations table alias and
-     * `aliases.agentJoin` is the joined users table alias (for department).
+     * the caller's allowed scope. `aliases.e` is the evaluations table alias
+     * and `aliases.agentJoin` is the joined users table alias (for QA's
+     * department filter — TLs only need brand).
      *
-     *  - returns { clause: '', params: [] } if the caller isn't a QA
-     *  - returns a clause that matches NOTHING if the QA has empty scope,
-     *    so a misconfigured account stays blocked instead of leaking data.
+     *  - returns { clause: '', params: [] } if the caller has no scope rules
+     *  - returns " AND 1=0 " when the caller's arrays are empty, so a
+     *    misconfigured account stays blocked instead of leaking data.
+     *
+     *  Name kept as buildQAScopeClause for backwards-compat with the many
+     *  call sites that already use it — the body now also handles TLs.
      */
     const buildQAScopeClause = async (
       userId: any,
       role: any,
       aliases: { e: string; agentJoin: string }
     ): Promise<{ clause: string; params: any[] }> => {
-      if (role !== 'qa') return { clause: '', params: [] };
-      const scope = await getQAScope(userId);
-      if (!scope) return { clause: '', params: [] };
-      // Deny-by-default: empty arrays → no rows match.
-      if (scope.departments.length === 0 || scope.brands.length === 0) {
-        return { clause: ' AND 1=0 ', params: [] };
+      if (role === 'qa') {
+        const scope = await getQAScope(userId);
+        if (!scope) return { clause: '', params: [] };
+        if (scope.departments.length === 0 || scope.brands.length === 0) {
+          return { clause: ' AND 1=0 ', params: [] };
+        }
+        const brandPh = scope.brands.map(() => '?').join(',');
+        const depPh = scope.departments.map(() => '?').join(',');
+        const clause = ` AND ${aliases.e}.brand IN (${brandPh}) AND ${aliases.agentJoin}.department IN (${depPh}) `;
+        return { clause, params: [...scope.brands, ...scope.departments] };
       }
-      const brandPh = scope.brands.map(() => '?').join(',');
-      const depPh = scope.departments.map(() => '?').join(',');
-      const clause = ` AND ${aliases.e}.brand IN (${brandPh}) AND ${aliases.agentJoin}.department IN (${depPh}) `;
-      return { clause, params: [...scope.brands, ...scope.departments] };
+
+      if (role === 'tl') {
+        const brands = await getTLBrandScope(userId);
+        if (!brands) return { clause: '', params: [] };
+        // Deny-by-default — a TL with no assigned brands sees nothing.
+        if (brands.length === 0) return { clause: ' AND 1=0 ', params: [] };
+        const brandPh = brands.map(() => '?').join(',');
+        return { clause: ` AND ${aliases.e}.brand IN (${brandPh}) `, params: [...brands] };
+      }
+
+      return { clause: '', params: [] };
     };
 
     // Health check
@@ -587,10 +613,13 @@ async function startServer() {
     app.post("/api/users", async (req, res) => {
       const { display_name, username, password, role, department, tl_id, allowed_departments, allowed_brands } = req.body;
       const hashedPassword = bcrypt.hashSync(password, 10);
-      // Only QAs store scope arrays. Other roles get NULL so existing visibility
-      // rules (supervisor/tl/agent) are untouched.
+      // QAs store departments + brands. TLs store brands only (their team
+      // scope already comes from agent.tl_id). Other roles stay NULL so the
+      // existing visibility rules (supervisor/agent) are untouched.
       const depsJson = role === 'qa' ? JSON.stringify(Array.isArray(allowed_departments) ? allowed_departments : []) : null;
-      const brandsJson = role === 'qa' ? JSON.stringify(Array.isArray(allowed_brands) ? allowed_brands : []) : null;
+      const brandsJson = (role === 'qa' || role === 'tl')
+        ? JSON.stringify(Array.isArray(allowed_brands) ? allowed_brands : [])
+        : null;
       try {
         await db.prepare(
           "INSERT INTO users (display_name, username, password, role, department, tl_id, allowed_departments, allowed_brands) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
@@ -610,7 +639,9 @@ async function startServer() {
         if (!existing) return res.status(404).json({ error: "User not found" });
 
         const depsJson = role === 'qa' ? JSON.stringify(Array.isArray(allowed_departments) ? allowed_departments : []) : null;
-        const brandsJson = role === 'qa' ? JSON.stringify(Array.isArray(allowed_brands) ? allowed_brands : []) : null;
+        const brandsJson = (role === 'qa' || role === 'tl')
+          ? JSON.stringify(Array.isArray(allowed_brands) ? allowed_brands : [])
+          : null;
 
         if (password && password.length > 0) {
           const hashedPassword = bcrypt.hashSync(password, 10);
