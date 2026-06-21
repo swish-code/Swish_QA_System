@@ -177,6 +177,65 @@ async function startServer() {
     try { await db.exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS allowed_departments TEXT"); } catch(e) {}
     try { await db.exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS allowed_brands TEXT"); } catch(e) {}
 
+    // Canonical brand list — single source of truth across the app.
+    // This migration runs ONCE (gated by a marker row in form_settings)
+    // and:
+    //   1. Soft-deletes (is_active=0) any existing brand rows that
+    //      aren't in the canonical list — keeps them around so old
+    //      evaluations still resolve, but they no longer appear in
+    //      dropdowns or QA scope pickers.
+    //   2. Inserts/reactivates every canonical brand with the right
+    //      label and sort order.
+    //
+    // To revise the list in the future, change CANONICAL_BRANDS and
+    // bump the marker version string.
+    try {
+      const CANONICAL_BRANDS = [
+        'Shakir', 'Yelo', 'BBT', 'Mishmash', 'Tabel',
+        'Slice', 'Pattie', 'Chili', 'Just C', 'FM',
+      ];
+      const MARKER_VERSION = 'brands_v3_2026_06';
+      const marker = await db.prepare(
+        "SELECT id FROM form_settings WHERE field_type = '_meta' AND value = ?"
+      ).get(MARKER_VERSION) as any;
+
+      if (!marker) {
+        // 1. Deactivate everything that isn't in the canonical list.
+        const placeholders = CANONICAL_BRANDS.map(() => '?').join(',');
+        await db.prepare(
+          `UPDATE form_settings SET is_active = 0
+           WHERE field_type = 'brand' AND value NOT IN (${placeholders})`
+        ).run(...CANONICAL_BRANDS);
+
+        // 2. Upsert each canonical brand. If a row with the same value
+        //    already exists, reactivate it + fix its label/sort order;
+        //    otherwise insert it.
+        for (let i = 0; i < CANONICAL_BRANDS.length; i++) {
+          const brand = CANONICAL_BRANDS[i];
+          const existing = await db.prepare(
+            "SELECT id FROM form_settings WHERE field_type = 'brand' AND value = ?"
+          ).get(brand) as any;
+          if (existing) {
+            await db.prepare(
+              "UPDATE form_settings SET label_en = ?, label_ar = ?, is_active = 1, sort_order = ? WHERE id = ?"
+            ).run(brand, brand, i, existing.id);
+          } else {
+            await db.prepare(
+              "INSERT INTO form_settings (field_type, label_en, label_ar, value, is_active, sort_order) VALUES ('brand', ?, ?, ?, 1, ?)"
+            ).run(brand, brand, brand, i);
+          }
+        }
+
+        // 3. Drop the marker so this migration is idempotent.
+        await db.prepare(
+          "INSERT INTO form_settings (field_type, label_en, value, is_active, sort_order) VALUES ('_meta', 'brands canonical list applied', ?, 0, 0)"
+        ).run(MARKER_VERSION);
+        console.log(`Brand list synced (${MARKER_VERSION})`);
+      }
+    } catch (err) {
+      console.error('Brand list migration failed:', err);
+    }
+
     // Seed initial form settings if empty or missing evaluation criteria
     try {
       const settingsCount = (await db.prepare("SELECT COUNT(*) as count FROM form_settings").get() as any).count;
