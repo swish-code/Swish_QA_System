@@ -408,7 +408,9 @@ export default function UserManagement() {
                   </select>
                 </div>
 
-                {formData.role !== 'agent' && (
+                {/* TLs and Agents don't get a Department picker — TLs are scoped
+                    by Assigned Brands, Agents inherit theirs from their TL */}
+                {formData.role !== 'agent' && formData.role !== 'tl' && (
                   <div className="space-y-4">
                     <label className="text-[10px] font-black text-zinc-400 dark:text-zinc-600 uppercase tracking-[0.3em] ml-1 flex items-center gap-2 italic">Department</label>
                     <select
