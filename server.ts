@@ -177,6 +177,95 @@ async function startServer() {
     try { await db.exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS allowed_departments TEXT"); } catch(e) {}
     try { await db.exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS allowed_brands TEXT"); } catch(e) {}
 
+    // -----------------------------------------------------------------
+    // QA KPI infrastructure — four metrics aggregated into a monthly
+    // score per QA: Calls (40%) + Duration (10%) + Tasks (20%) +
+    // Accuracy (30%). All tables additive — no changes to existing
+    // ones, so this feature can be removed cleanly without rollback.
+    // -----------------------------------------------------------------
+
+    // Session tracking for the Duration metric. Heartbeat-driven:
+    //   - on login, insert a row with logout_at = NULL
+    //   - frontend pings /api/sessions/heartbeat every few minutes,
+    //     bumping last_seen_at (and effective logout_at)
+    //   - explicit /api/sessions/logout finalises the session
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS user_sessions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        login_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        last_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        logout_at TIMESTAMP,
+        duration_seconds INTEGER DEFAULT 0
+      );
+    `);
+
+    // Approved leave days — subtracted from the monthly working-day
+    // target so the Duration KPI doesn't penalise people who were
+    // legitimately off.
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS user_leaves (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        leave_date TEXT NOT NULL,
+        leave_type TEXT,
+        note TEXT,
+        approved_by INTEGER,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    // Accuracy cases — TL flags a QA-attributed mistake. Supervisor can
+    // adjust qa_share to 0.5 for shared-responsibility cases. QA can
+    // comment/dispute. severity controls deduction weight.
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS accuracy_cases (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        qa_id INTEGER NOT NULL,
+        tl_id INTEGER NOT NULL,
+        evaluation_id INTEGER,
+        title TEXT NOT NULL,
+        description TEXT,
+        severity TEXT DEFAULT 'medium',
+        qa_share REAL DEFAULT 1.0,
+        status TEXT DEFAULT 'open',
+        qa_comment TEXT,
+        supervisor_note TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        resolved_at TIMESTAMP
+      );
+    `);
+
+    // Per-QA KPI configuration. user_id NULL = system-wide defaults.
+    // Weights must sum to 1.0 (frontend enforces; backend trusts).
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS qa_kpi_config (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER UNIQUE,
+        calls_target INTEGER DEFAULT 910,
+        duration_hours_per_day REAL DEFAULT 8,
+        duration_days_per_month INTEGER DEFAULT 26,
+        escalation_sla_hours INTEGER DEFAULT 24,
+        weight_calls REAL DEFAULT 0.4,
+        weight_duration REAL DEFAULT 0.1,
+        weight_tasks REAL DEFAULT 0.2,
+        weight_accuracy REAL DEFAULT 0.3,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    // Seed system-wide defaults if missing.
+    try {
+      const existing = await db.prepare("SELECT id FROM qa_kpi_config WHERE user_id IS NULL").get();
+      if (!existing) {
+        await db.prepare(
+          "INSERT INTO qa_kpi_config (user_id, calls_target, duration_hours_per_day, duration_days_per_month, escalation_sla_hours, weight_calls, weight_duration, weight_tasks, weight_accuracy) VALUES (NULL, 910, 8, 26, 24, 0.4, 0.1, 0.2, 0.3)"
+        ).run();
+      }
+    } catch (e) {
+      console.error('Failed to seed qa_kpi_config defaults:', e);
+    }
+
     // Canonical brand list — single source of truth across the app.
     // This migration runs ONCE (gated by a marker row in form_settings)
     // and:
@@ -584,8 +673,22 @@ async function startServer() {
         return res.status(401).json({ error: "Invalid credentials" });
       }
       const token = jwt.sign({ id: user.id, role: user.role }, JWT_SECRET);
+
+      // Open a session row for KPI Duration tracking. Wrapped in try/catch
+      // so a session-table issue can never break login.
+      let sessionId: any = null;
+      try {
+        const result = await db.prepare(
+          "INSERT INTO user_sessions (user_id, login_at, last_seen_at) VALUES (?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+        ).run(user.id);
+        sessionId = result.lastInsertRowid;
+      } catch (e) {
+        console.error('Failed to open session row:', e);
+      }
+
       res.json({
         token,
+        session_id: sessionId,
         user: {
           id: user.id,
           display_name: user.display_name,
@@ -595,6 +698,52 @@ async function startServer() {
           allowed_brands: parseJsonArray(user.allowed_brands),
         }
       });
+    });
+
+    // Session heartbeat — keeps logout_at / last_seen_at fresh while
+    // the user is active. Frontend pings every 2 minutes.
+    app.post("/api/sessions/heartbeat", async (req, res) => {
+      try {
+        const { session_id } = req.body;
+        if (!session_id) return res.status(400).json({ error: "session_id required" });
+        await db.prepare(
+          `UPDATE user_sessions
+           SET last_seen_at = CURRENT_TIMESTAMP,
+               logout_at = CURRENT_TIMESTAMP,
+               duration_seconds = CAST((EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - login_at))) AS INTEGER)
+           WHERE id = ?`
+        ).run(session_id);
+        res.json({ success: true });
+      } catch (e: any) {
+        // PG-specific EXTRACT not portable; fall back to client-recalculated total.
+        try {
+          await db.prepare(
+            `UPDATE user_sessions SET last_seen_at = CURRENT_TIMESTAMP, logout_at = CURRENT_TIMESTAMP WHERE id = ?`
+          ).run(req.body.session_id);
+          res.json({ success: true });
+        } catch (err: any) {
+          console.error('heartbeat failed:', err);
+          res.status(500).json({ error: err.message });
+        }
+      }
+    });
+
+    // Explicit logout — finalises the session. Idempotent: a missing
+    // session_id is treated as success so the frontend can call this on
+    // every logout button click without worrying about race conditions.
+    app.post("/api/sessions/logout", async (req, res) => {
+      try {
+        const { session_id } = req.body;
+        if (session_id) {
+          await db.prepare(
+            `UPDATE user_sessions SET logout_at = CURRENT_TIMESTAMP WHERE id = ?`
+          ).run(session_id);
+        }
+        res.json({ success: true });
+      } catch (e: any) {
+        console.error('logout failed:', e);
+        res.json({ success: true }); // never block logout
+      }
     });
 
     // Users Management
@@ -2231,6 +2380,346 @@ async function startServer() {
         });
       } catch (e: any) {
         console.error("/api/stats/qa-calls failed:", e);
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    // =================================================================
+    // QA KPIs — leaves, accuracy cases, config, and the aggregated score
+    // =================================================================
+
+    // ---------- Leaves ----------
+    app.get("/api/leaves", async (req, res) => {
+      try {
+        const { user_id, month } = req.query;
+        let q = `SELECT l.*, u.display_name AS user_name, a.display_name AS approved_by_name
+                 FROM user_leaves l
+                 LEFT JOIN users u ON l.user_id = u.id
+                 LEFT JOIN users a ON l.approved_by = a.id
+                 WHERE 1=1`;
+        const params: any[] = [];
+        if (user_id) { q += " AND l.user_id = ?"; params.push(user_id); }
+        if (month) {
+          q += " AND l.leave_date LIKE ?";
+          params.push(`${month}%`);
+        }
+        q += " ORDER BY l.leave_date DESC";
+        const rows = await db.prepare(q).all(...params);
+        res.json(rows);
+      } catch (e: any) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    app.post("/api/leaves", async (req, res) => {
+      try {
+        const { user_id, leave_date, leave_type, note, approved_by } = req.body;
+        if (!user_id || !leave_date) return res.status(400).json({ error: "user_id and leave_date required" });
+        await db.prepare(
+          "INSERT INTO user_leaves (user_id, leave_date, leave_type, note, approved_by) VALUES (?, ?, ?, ?, ?)"
+        ).run(user_id, leave_date, leave_type || 'annual', note || null, approved_by || null);
+        res.json({ success: true });
+      } catch (e: any) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    app.delete("/api/leaves/:id", async (req, res) => {
+      try {
+        await db.prepare("DELETE FROM user_leaves WHERE id = ?").run(req.params.id);
+        res.json({ success: true });
+      } catch (e: any) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    // ---------- Accuracy Cases ----------
+    app.get("/api/accuracy-cases", async (req, res) => {
+      try {
+        const { qa_id, tl_id, status, from_date, to_date } = req.query;
+        let q = `SELECT c.*, qa.display_name AS qa_name, tl.display_name AS tl_name
+                 FROM accuracy_cases c
+                 LEFT JOIN users qa ON c.qa_id = qa.id
+                 LEFT JOIN users tl ON c.tl_id = tl.id
+                 WHERE 1=1`;
+        const params: any[] = [];
+        if (qa_id) { q += " AND c.qa_id = ?"; params.push(qa_id); }
+        if (tl_id) { q += " AND c.tl_id = ?"; params.push(tl_id); }
+        if (status && status !== 'all') { q += " AND c.status = ?"; params.push(status); }
+        if (from_date) { q += " AND substr(c.created_at, 1, 10) >= ?"; params.push(from_date); }
+        if (to_date) { q += " AND substr(c.created_at, 1, 10) <= ?"; params.push(to_date); }
+        q += " ORDER BY c.created_at DESC";
+        const rows = await db.prepare(q).all(...params);
+        res.json(rows);
+      } catch (e: any) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    app.post("/api/accuracy-cases", async (req, res) => {
+      try {
+        const { qa_id, tl_id, evaluation_id, title, description, severity, qa_share } = req.body;
+        if (!qa_id || !tl_id || !title) return res.status(400).json({ error: "qa_id, tl_id, title required" });
+        const result = await db.prepare(
+          `INSERT INTO accuracy_cases (qa_id, tl_id, evaluation_id, title, description, severity, qa_share, status)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'open')`
+        ).run(qa_id, tl_id, evaluation_id || null, title, description || null, severity || 'medium', qa_share ?? 1.0);
+
+        // Notify the QA.
+        try {
+          const tl = await db.prepare("SELECT display_name FROM users WHERE id = ?").get(tl_id) as any;
+          await db.prepare(
+            "INSERT INTO notifications (user_id, title, message, evaluation_id) VALUES (?, ?, ?, ?)"
+          ).run(
+            qa_id,
+            "New Accuracy Case Opened",
+            `${tl?.display_name || 'A TL'} raised an accuracy case: "${title}" (${severity || 'medium'}).`,
+            evaluation_id || null
+          );
+        } catch {}
+
+        res.json({ success: true, id: result.lastInsertRowid });
+      } catch (e: any) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    app.put("/api/accuracy-cases/:id", async (req, res) => {
+      try {
+        const { title, description, severity, qa_share, status, qa_comment, supervisor_note } = req.body;
+        const id = req.params.id;
+        const existing = await db.prepare("SELECT id FROM accuracy_cases WHERE id = ?").get(id);
+        if (!existing) return res.status(404).json({ error: "Not found" });
+
+        // Build dynamic update — only set fields the caller actually sent.
+        const sets: string[] = [];
+        const params: any[] = [];
+        if (title !== undefined) { sets.push("title = ?"); params.push(title); }
+        if (description !== undefined) { sets.push("description = ?"); params.push(description); }
+        if (severity !== undefined) { sets.push("severity = ?"); params.push(severity); }
+        if (qa_share !== undefined) { sets.push("qa_share = ?"); params.push(qa_share); }
+        if (qa_comment !== undefined) { sets.push("qa_comment = ?"); params.push(qa_comment); }
+        if (supervisor_note !== undefined) { sets.push("supervisor_note = ?"); params.push(supervisor_note); }
+        if (status !== undefined) {
+          sets.push("status = ?");
+          params.push(status);
+          if (status === 'resolved' || status === 'dismissed') {
+            sets.push("resolved_at = CURRENT_TIMESTAMP");
+          }
+        }
+        sets.push("updated_at = CURRENT_TIMESTAMP");
+        params.push(id);
+        await db.prepare(`UPDATE accuracy_cases SET ${sets.join(', ')} WHERE id = ?`).run(...params);
+        res.json({ success: true });
+      } catch (e: any) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    app.delete("/api/accuracy-cases/:id", async (req, res) => {
+      try {
+        await db.prepare("DELETE FROM accuracy_cases WHERE id = ?").run(req.params.id);
+        res.json({ success: true });
+      } catch (e: any) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    // ---------- KPI Config ----------
+    const loadKPIConfig = async (userId: any) => {
+      let cfg: any = null;
+      if (userId) {
+        cfg = await db.prepare("SELECT * FROM qa_kpi_config WHERE user_id = ?").get(userId);
+      }
+      if (!cfg) {
+        cfg = await db.prepare("SELECT * FROM qa_kpi_config WHERE user_id IS NULL").get();
+      }
+      return cfg || {
+        calls_target: 910, duration_hours_per_day: 8, duration_days_per_month: 26,
+        escalation_sla_hours: 24, weight_calls: 0.4, weight_duration: 0.1,
+        weight_tasks: 0.2, weight_accuracy: 0.3,
+      };
+    };
+
+    app.get("/api/kpi/config/:user_id", async (req, res) => {
+      try {
+        const userId = req.params.user_id === 'default' ? null : req.params.user_id;
+        const cfg = await loadKPIConfig(userId);
+        res.json(cfg);
+      } catch (e: any) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    app.put("/api/kpi/config/:user_id", async (req, res) => {
+      try {
+        const userIdRaw = req.params.user_id;
+        const userId = userIdRaw === 'default' ? null : parseInt(userIdRaw, 10);
+        const { calls_target, duration_hours_per_day, duration_days_per_month, escalation_sla_hours,
+                weight_calls, weight_duration, weight_tasks, weight_accuracy } = req.body;
+        const existing = userId
+          ? await db.prepare("SELECT id FROM qa_kpi_config WHERE user_id = ?").get(userId) as any
+          : await db.prepare("SELECT id FROM qa_kpi_config WHERE user_id IS NULL").get() as any;
+
+        if (existing) {
+          await db.prepare(
+            `UPDATE qa_kpi_config
+             SET calls_target=?, duration_hours_per_day=?, duration_days_per_month=?, escalation_sla_hours=?,
+                 weight_calls=?, weight_duration=?, weight_tasks=?, weight_accuracy=?, updated_at=CURRENT_TIMESTAMP
+             WHERE id = ?`
+          ).run(calls_target, duration_hours_per_day, duration_days_per_month, escalation_sla_hours,
+                weight_calls, weight_duration, weight_tasks, weight_accuracy, existing.id);
+        } else {
+          await db.prepare(
+            `INSERT INTO qa_kpi_config (user_id, calls_target, duration_hours_per_day, duration_days_per_month, escalation_sla_hours, weight_calls, weight_duration, weight_tasks, weight_accuracy)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          ).run(userId, calls_target, duration_hours_per_day, duration_days_per_month, escalation_sla_hours,
+                weight_calls, weight_duration, weight_tasks, weight_accuracy);
+        }
+        res.json({ success: true });
+      } catch (e: any) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    // ---------- The aggregated KPI calculator ----------
+    // Splits one month into the four metrics, each scored 0..100, then
+    // blends them by the per-QA (or default) weights.
+    const computeQAKPI = async (qaId: number, month: string) => {
+      const monthStart = `${month}-01`;
+      const [yr, mo] = month.split('-').map(Number);
+      const lastDay = new Date(yr, mo, 0).getDate();
+      const monthEnd = `${month}-${String(lastDay).padStart(2, '0')}`;
+      const cfg = await loadKPIConfig(qaId);
+
+      // ----- Calls -----
+      const callsRow = await db.prepare(
+        `SELECT COUNT(*) AS c FROM evaluations WHERE qa_id = ? AND date >= ? AND date <= ?`
+      ).get(qaId, monthStart, monthEnd) as any;
+      const callsActual = Number(callsRow?.c || 0);
+      const callsScore = Math.min(100, (callsActual / Math.max(1, cfg.calls_target)) * 100);
+
+      // ----- Duration -----
+      // Sum (last_seen_at - login_at) for all sessions in the month.
+      // The PG-specific EXTRACT trick is wrapped — if it fails, fall back
+      // to JS-side calculation by reading rows.
+      let actualSeconds = 0;
+      try {
+        const sessions = await db.prepare(
+          `SELECT login_at, last_seen_at FROM user_sessions
+           WHERE user_id = ? AND substr(CAST(login_at AS TEXT), 1, 10) >= ? AND substr(CAST(login_at AS TEXT), 1, 10) <= ?`
+        ).all(qaId, monthStart, monthEnd) as any[];
+        for (const s of sessions) {
+          if (!s.login_at) continue;
+          const start = new Date(s.login_at).getTime();
+          const end = s.last_seen_at ? new Date(s.last_seen_at).getTime() : start;
+          if (end > start) actualSeconds += Math.floor((end - start) / 1000);
+        }
+      } catch {}
+      const actualHours = actualSeconds / 3600;
+
+      const leavesRow = await db.prepare(
+        `SELECT COUNT(*) AS c FROM user_leaves WHERE user_id = ? AND leave_date >= ? AND leave_date <= ?`
+      ).get(qaId, monthStart, monthEnd) as any;
+      const leaveDays = Number(leavesRow?.c || 0);
+      const effectiveDays = Math.max(0, cfg.duration_days_per_month - leaveDays);
+      const targetHours = effectiveDays * cfg.duration_hours_per_day;
+      const durationScore = targetHours <= 0 ? 100 : Math.min(100, (actualHours / targetHours) * 100);
+
+      // ----- Tasks (escalations handled within SLA) -----
+      // Pair each "escalated" event with the next non-escalated QA action
+      // on the same evaluation. Delta vs SLA decides pass/fail.
+      const slaSeconds = cfg.escalation_sla_hours * 3600;
+      const escalations = await db.prepare(
+        `SELECT evaluation_id, created_at FROM escalation_logs
+         WHERE action = 'escalated' AND substr(CAST(created_at AS TEXT), 1, 10) >= ? AND substr(CAST(created_at AS TEXT), 1, 10) <= ?`
+      ).all(monthStart, monthEnd) as any[];
+
+      let tasksTotal = 0;
+      let tasksOnTime = 0;
+      let tasksOverdue = 0;
+      for (const esc of escalations) {
+        const response = await db.prepare(
+          `SELECT created_at FROM escalation_logs
+           WHERE evaluation_id = ? AND user_id = ? AND action <> 'escalated' AND created_at > ?
+           ORDER BY created_at ASC LIMIT 1`
+        ).get(esc.evaluation_id, qaId, esc.created_at) as any;
+        if (!response) continue; // not assigned to this QA, or still pending
+        tasksTotal++;
+        const dt = (new Date(response.created_at).getTime() - new Date(esc.created_at).getTime()) / 1000;
+        if (dt <= slaSeconds) tasksOnTime++; else tasksOverdue++;
+      }
+      const tasksScore = tasksTotal === 0 ? 100 : (tasksOnTime / tasksTotal) * 100;
+
+      // ----- Accuracy -----
+      // Deduct (severity weight × qa_share) per case opened in the month.
+      const sevWeight: Record<string, number> = { low: 2, medium: 5, high: 10 };
+      const cases = await db.prepare(
+        `SELECT severity, qa_share, status FROM accuracy_cases
+         WHERE qa_id = ? AND substr(CAST(created_at AS TEXT), 1, 10) >= ? AND substr(CAST(created_at AS TEXT), 1, 10) <= ?`
+      ).all(qaId, monthStart, monthEnd) as any[];
+      let deductions = 0;
+      const openCases = cases.filter(c => c.status !== 'dismissed');
+      for (const c of openCases) {
+        const w = sevWeight[c.severity] || 5;
+        deductions += w * (Number(c.qa_share) || 1);
+      }
+      const accuracyScore = Math.max(0, 100 - deductions);
+
+      // ----- Blend -----
+      const totalScore =
+        callsScore * cfg.weight_calls +
+        durationScore * cfg.weight_duration +
+        tasksScore * cfg.weight_tasks +
+        accuracyScore * cfg.weight_accuracy;
+
+      return {
+        qa_id: qaId,
+        month,
+        config: cfg,
+        calls: { actual: callsActual, target: cfg.calls_target, score: Math.round(callsScore * 10) / 10, weight: cfg.weight_calls },
+        duration: { actual_hours: Math.round(actualHours * 10) / 10, target_hours: targetHours, leave_days: leaveDays, score: Math.round(durationScore * 10) / 10, weight: cfg.weight_duration },
+        tasks: { total: tasksTotal, on_time: tasksOnTime, overdue: tasksOverdue, sla_hours: cfg.escalation_sla_hours, score: Math.round(tasksScore * 10) / 10, weight: cfg.weight_tasks },
+        accuracy: { cases: openCases.length, deductions: Math.round(deductions * 10) / 10, score: Math.round(accuracyScore * 10) / 10, weight: cfg.weight_accuracy },
+        total_score: Math.round(totalScore * 10) / 10,
+      };
+    };
+
+    // Single QA — used by self-view and detail drill-in.
+    app.get("/api/kpi/qa/:user_id", async (req, res) => {
+      try {
+        const userId = parseInt(req.params.user_id, 10);
+        const month = (req.query.month as string) || new Date().toISOString().slice(0, 7);
+        const result = await computeQAKPI(userId, month);
+        res.json(result);
+      } catch (e: any) {
+        console.error('KPI compute failed:', e);
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    // All QAs — supervisor view. Returns a lean summary per QA.
+    app.get("/api/kpi/summary", async (req, res) => {
+      try {
+        const month = (req.query.month as string) || new Date().toISOString().slice(0, 7);
+        const qas = await db.prepare("SELECT id, display_name FROM users WHERE role = 'qa'").all() as any[];
+        const results = [];
+        for (const qa of qas) {
+          const r = await computeQAKPI(qa.id, month);
+          results.push({
+            qa_id: qa.id,
+            qa_name: qa.display_name,
+            calls_score: r.calls.score,
+            duration_score: r.duration.score,
+            tasks_score: r.tasks.score,
+            accuracy_score: r.accuracy.score,
+            total_score: r.total_score,
+          });
+        }
+        results.sort((a, b) => b.total_score - a.total_score);
+        res.json({ month, qas: results });
+      } catch (e: any) {
+        console.error('KPI summary failed:', e);
         res.status(500).json({ error: e.message });
       }
     });

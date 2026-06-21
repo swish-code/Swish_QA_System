@@ -1,19 +1,21 @@
 import { motion } from 'motion/react';
-import { 
-  LayoutDashboard, 
-  Users, 
-  FileCheck, 
-  PenTool, 
-  BarChart3, 
-  MessageSquare, 
-  Bell, 
-  LogOut, 
+import {
+  LayoutDashboard,
+  Users,
+  FileCheck,
+  PenTool,
+  BarChart3,
+  MessageSquare,
+  Bell,
+  LogOut,
   Settings,
   Zap,
   ChevronRight,
   TrendingUp,
   History,
-  Activity
+  Activity,
+  Trophy,
+  ShieldCheck
 } from 'lucide-react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
@@ -44,6 +46,8 @@ export default function Sidebar() {
     { name: 'Coaching', icon: MessageSquare, path: '/coaching', roles: ['tl', 'supervisor', 'agent'] },
     { name: 'Escalations', icon: Bell, path: '/escalations', roles: ['qa', 'tl', 'supervisor'] },
     { name: 'Drop Point', icon: BarChart3, path: '/drop-point', roles: ['qa', 'supervisor', 'tl'] },
+    { name: 'QA KPIs', icon: Trophy, path: '/qa-kpis', roles: ['qa', 'supervisor'] },
+    { name: 'Accuracy Cases', icon: ShieldCheck, path: '/accuracy-cases', roles: ['qa', 'tl', 'supervisor'] },
     { name: 'User Management', icon: Users, path: '/users', roles: ['supervisor'] },
     { name: 'Activity Audit', icon: History, path: '/activity-audit', roles: ['supervisor', 'qa', 'tl'] },
     { name: 'Form Settings', icon: Settings, path: '/settings/form', roles: ['supervisor'] },

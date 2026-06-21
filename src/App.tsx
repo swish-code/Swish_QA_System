@@ -18,6 +18,8 @@ import DropPoint from './pages/DropPoint';
 import Notifications from './pages/Notifications';
 import ActivityAudit from './pages/ActivityAudit';
 import Analysis from './pages/Analysis';
+import QAKPIs from './pages/QAKPIs';
+import AccuracyCases from './pages/AccuracyCases';
 
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   const { user, isLoading } = useAuth();
@@ -50,6 +52,8 @@ export default function App() {
           <Route path="/activity-audit" element={<ProtectedRoute><ActivityAudit /></ProtectedRoute>} />
           <Route path="/analysis" element={<ProtectedRoute><Analysis /></ProtectedRoute>} />
           <Route path="/settings/form" element={<ProtectedRoute><FormSettings /></ProtectedRoute>} />
+          <Route path="/qa-kpis" element={<ProtectedRoute><QAKPIs /></ProtectedRoute>} />
+          <Route path="/accuracy-cases" element={<ProtectedRoute><AccuracyCases /></ProtectedRoute>} />
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>
         </Router>
