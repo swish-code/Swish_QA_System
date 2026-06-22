@@ -4,8 +4,9 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import {
   Target, Phone, Clock, ListChecks, ShieldCheck, TrendingUp, Trophy, Settings,
-  Calendar, ArrowRight, AlertCircle, ChevronRight
+  Calendar, ArrowRight, AlertCircle, ChevronRight, Download
 } from 'lucide-react';
+import * as XLSX from 'xlsx';
 
 type SummaryRow = {
   qa_id: number;
@@ -77,6 +78,136 @@ export default function QAKPIs() {
     } catch (e) { console.error(e); setDetail(null); }
   }, [targetQAId, month]);
 
+  // -------------------------------------------------------------------
+  // Excel export
+  //   Supervisor view → two sheets:
+  //     1. Leaderboard (one row per QA — summary scores)
+  //     2. Full Breakdown (one row per QA — every metric's raw + score)
+  //   QA self-view → single sheet with their own breakdown.
+  // Fetches detail for every QA on the fly so weights/targets are
+  // accurate even if defaults were customised per user.
+  // -------------------------------------------------------------------
+  const [exporting, setExporting] = useState(false);
+  const exportToExcel = useCallback(async () => {
+    setExporting(true);
+    try {
+      // Always fetch per-QA detail rows (the leaderboard endpoint only
+      // returns scores, not the raw counts we want in the breakdown).
+      const qaIds = isSupervisor
+        ? summary.map(s => s.qa_id)
+        : (user ? [user.id] : []);
+      const details = await Promise.all(
+        qaIds.map(id =>
+          fetch(`/api/kpi/qa/${id}?month=${month}`)
+            .then(r => r.ok ? r.json() : null)
+            .catch(() => null)
+        )
+      ).then(rows => rows.filter(Boolean) as Detail[]);
+
+      const wb = XLSX.utils.book_new();
+
+      // ----- Sheet 1: Leaderboard (supervisor only) -----
+      if (isSupervisor) {
+        const leaderboardRows = summary.map((s, i) => ({
+          Rank: i + 1,
+          'QA Name': s.qa_name,
+          'Calls Score': s.calls_score,
+          'Duration Score': s.duration_score,
+          'Tasks Score': s.tasks_score,
+          'Accuracy Score': s.accuracy_score,
+          'Total Score': s.total_score,
+        }));
+        const ws1 = XLSX.utils.json_to_sheet(leaderboardRows);
+        ws1['!cols'] = [
+          { wch: 6 }, { wch: 24 }, { wch: 13 }, { wch: 15 }, { wch: 13 }, { wch: 16 }, { wch: 14 },
+        ];
+        XLSX.utils.book_append_sheet(wb, ws1, 'Leaderboard');
+      }
+
+      // ----- Sheet 2: Full per-QA breakdown -----
+      const idToName = new Map(summary.map(s => [s.qa_id, s.qa_name]));
+      const detailRows = details.map(d => {
+        const name = idToName.get(d.qa_id) || (user?.id === d.qa_id ? user.display_name : `QA #${d.qa_id}`);
+        return {
+          QA: name,
+          Month: d.month,
+          'Calls Logged': d.calls.actual,
+          'Calls Target': d.calls.target,
+          'Calls Score': d.calls.score,
+          'Calls Weight %': (d.calls.weight * 100).toFixed(0),
+          'Duration Hours': d.duration.actual_hours,
+          'Duration Target Hours': d.duration.target_hours,
+          'Leave Days': d.duration.leave_days,
+          'Duration Score': d.duration.score,
+          'Duration Weight %': (d.duration.weight * 100).toFixed(0),
+          'Tasks Total': d.tasks.total,
+          'Tasks On Time': d.tasks.on_time,
+          'Tasks Overdue': d.tasks.overdue,
+          'SLA Hours': d.tasks.sla_hours,
+          'Tasks Score': d.tasks.score,
+          'Tasks Weight %': (d.tasks.weight * 100).toFixed(0),
+          'Accuracy Cases': d.accuracy.cases,
+          'Accuracy Deductions': d.accuracy.deductions,
+          'Accuracy Score': d.accuracy.score,
+          'Accuracy Weight %': (d.accuracy.weight * 100).toFixed(0),
+          'TOTAL SCORE': d.total_score,
+        };
+      });
+      const ws2 = XLSX.utils.json_to_sheet(detailRows);
+      ws2['!cols'] = new Array(23).fill(null).map(() => ({ wch: 16 }));
+      ws2['!cols'][0] = { wch: 22 }; // QA name a bit wider
+      XLSX.utils.book_append_sheet(wb, ws2, 'Full Breakdown');
+
+      // ----- Sheet 3: Accuracy cases for this month (supervisor only) -----
+      if (isSupervisor) {
+        try {
+          const monthStart = `${month}-01`;
+          const [yr, mo] = month.split('-').map(Number);
+          const lastDay = new Date(yr, mo, 0).getDate();
+          const monthEnd = `${month}-${String(lastDay).padStart(2, '0')}`;
+          const casesRes = await fetch(`/api/accuracy-cases?from_date=${monthStart}&to_date=${monthEnd}`);
+          if (casesRes.ok) {
+            const cases = await casesRes.json();
+            const caseRows = (cases as any[]).map(c => ({
+              ID: c.id,
+              QA: c.qa_name,
+              'Raised By (TL)': c.tl_name,
+              'Call ID': c.evaluation_id || '',
+              Title: c.title,
+              Severity: c.severity,
+              'QA Share %': (Number(c.qa_share) * 100).toFixed(0),
+              Status: c.status,
+              Description: c.description || '',
+              'QA Comment': c.qa_comment || '',
+              'Supervisor Note': c.supervisor_note || '',
+              'Created At': c.created_at,
+              'Resolved At': c.resolved_at || '',
+            }));
+            if (caseRows.length) {
+              const ws3 = XLSX.utils.json_to_sheet(caseRows);
+              ws3['!cols'] = [
+                { wch: 6 }, { wch: 20 }, { wch: 20 }, { wch: 8 }, { wch: 30 },
+                { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 40 }, { wch: 40 },
+                { wch: 30 }, { wch: 20 }, { wch: 20 },
+              ];
+              XLSX.utils.book_append_sheet(wb, ws3, 'Accuracy Cases');
+            }
+          }
+        } catch (e) { console.error('accuracy cases export failed:', e); }
+      }
+
+      const filename = isSupervisor
+        ? `qa-kpis-${month}.xlsx`
+        : `qa-kpis-${user?.display_name?.replace(/\s+/g, '_') || 'me'}-${month}.xlsx`;
+      XLSX.writeFile(wb, filename);
+    } catch (e) {
+      console.error('Excel export failed:', e);
+      alert('Excel export failed. See console for details.');
+    } finally {
+      setExporting(false);
+    }
+  }, [isSupervisor, summary, month, user]);
+
   useEffect(() => {
     setLoading(true);
     Promise.all([fetchSummary(), fetchDetail()]).finally(() => setLoading(false));
@@ -119,6 +250,25 @@ export default function QAKPIs() {
               <ShieldCheck size={12} /> Accuracy Cases
             </button>
           )}
+          <button
+            onClick={exportToExcel}
+            disabled={exporting || loading || (isSupervisor && summary.length === 0)}
+            className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-[10px] font-black uppercase tracking-widest hover:bg-emerald-500 transition-colors flex items-center gap-2 shadow-lg shadow-emerald-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
+            title={isSupervisor
+              ? 'Download every QA\'s KPI breakdown as an Excel workbook'
+              : 'Download your own KPI breakdown as an Excel sheet'}
+          >
+            {exporting ? (
+              <>
+                <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                Exporting…
+              </>
+            ) : (
+              <>
+                <Download size={12} /> Excel
+              </>
+            )}
+          </button>
         </div>
       </div>
 
