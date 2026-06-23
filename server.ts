@@ -1956,13 +1956,17 @@ async function startServer() {
       const qaScope = await buildQAScopeClause(callerId, role, { e: 'e', agentJoin: 'a' });
       evalsQuery += qaScope.clause;
       evalsParams.push(...qaScope.params);
-      // Legacy TL fallback — no brand list configured = restrict to team.
+
+      // TL Team Overview is ALWAYS strictly team-based — we filter both
+      // the agent roster and the evaluation list down to agents whose
+      // tl_id matches this TL. Brand scope (when configured) layers on top
+      // via the qaScope clause above, so a TL with both team links AND
+      // assigned brands sees the intersection.
       if (role === 'tl') {
-        const tlBrands = await getTLBrandScope(callerId);
-        if (tlBrands === null) {
-          evalsQuery += " AND a.tl_id = ?";
-          evalsParams.push(callerId);
-        }
+        agentsQuery += " AND tl_id = ?";
+        agentsParams.push(callerId);
+        evalsQuery += " AND a.tl_id = ?";
+        evalsParams.push(callerId);
       }
       if (role === 'qa') {
         const scope = await getQAScope(callerId);
