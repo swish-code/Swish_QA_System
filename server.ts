@@ -901,9 +901,12 @@ async function startServer() {
         baseQuery += " AND e.agent_id = ? AND e.status IN ('Sent to Agent', 'Quality Approved', 'Rejected by Quality')";
         params.push(user_id);
       } else if (role === 'tl') {
-        // TL only sees evaluations belonging to their direct team.
-        baseQuery += " AND a.tl_id = ?";
-        params.push(user_id);
+        // TL visibility is brand-based — assigned via User Management. We no
+        // longer require a.tl_id = TL.id because in practice a brand-line
+        // manager isn't necessarily the line manager of every agent on that
+        // brand. buildQAScopeClause below applies the IN(allowed_brands)
+        // filter. A TL with no brand configured falls back to a team filter
+        // so they don't go dark — see the fallback after the scope clause.
       }
 
       // QA scope enforcement — restricts to assigned brands + departments.
@@ -911,6 +914,17 @@ async function startServer() {
       const qaScope = await buildQAScopeClause(user_id, role, { e: 'e', agentJoin: 'a' });
       baseQuery += qaScope.clause;
       params.push(...qaScope.params);
+
+      // Legacy fallback: a TL with no brand list configured used to be
+      // limited to a.tl_id = self. Keep that for backwards-compat so an
+      // un-migrated tenant doesn't suddenly see everything.
+      if (role === 'tl') {
+        const tlBrands = await getTLBrandScope(user_id);
+        if (tlBrands === null) {
+          baseQuery += " AND a.tl_id = ?";
+          params.push(user_id);
+        }
+      }
       // supervisor: no additional filter — they see every evaluation in every state.
 
       if (agent_id && agent_id !== 'all') {
@@ -1942,6 +1956,14 @@ async function startServer() {
       const qaScope = await buildQAScopeClause(callerId, role, { e: 'e', agentJoin: 'a' });
       evalsQuery += qaScope.clause;
       evalsParams.push(...qaScope.params);
+      // Legacy TL fallback — no brand list configured = restrict to team.
+      if (role === 'tl') {
+        const tlBrands = await getTLBrandScope(callerId);
+        if (tlBrands === null) {
+          evalsQuery += " AND a.tl_id = ?";
+          evalsParams.push(callerId);
+        }
+      }
       if (role === 'qa') {
         const scope = await getQAScope(callerId);
         if (scope) {
@@ -2022,6 +2044,14 @@ async function startServer() {
         const qaScope = await buildQAScopeClause(user_id, role, { e: 'e', agentJoin: 'a' });
         evalsQuery += qaScope.clause;
         params.push(...qaScope.params);
+        // Legacy TL fallback — no brand list configured = restrict to team.
+        if (role === 'tl') {
+          const tlBrands = await getTLBrandScope(user_id);
+          if (tlBrands === null) {
+            evalsQuery += " AND a.tl_id = ?";
+            params.push(user_id);
+          }
+        }
         if (role === 'qa') {
           const scope = await getQAScope(user_id);
           if (scope) {
@@ -2239,10 +2269,8 @@ async function startServer() {
         if (role === 'agent') {
           evalsQuery += " AND e.agent_id = ?";
           params.push(user_id);
-        } else if (role === 'tl') {
-          evalsQuery += " AND a.tl_id = ?";
-          params.push(user_id);
         }
+        // TL: legacy fallback handled after the brand scope clause below.
 
         // QA: restrict to assigned brands + departments. Also restrict the
         // active-agents list to the same department scope so headline counts
@@ -2262,6 +2290,16 @@ async function startServer() {
               agentsQuery += ` AND department IN (${ph})`;
               agentParams.push(...scope.departments);
             }
+          }
+        }
+
+        // Legacy TL fallback — if no brand list configured, behave like the
+        // old team-scoped TL: only their direct agents' evaluations.
+        if (role === 'tl') {
+          const tlBrands = await getTLBrandScope(user_id);
+          if (tlBrands === null) {
+            evalsQuery += " AND a.tl_id = ?";
+            params.push(user_id);
           }
         }
 
