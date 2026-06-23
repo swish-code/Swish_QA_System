@@ -592,25 +592,48 @@ async function startServer() {
       } catch { return []; }
     };
 
-    const getQAScope = async (userId: any): Promise<{ departments: string[]; brands: string[] } | null> => {
+    /**
+     * Three-state scope value:
+     *   - null            → column is NULL (never configured, legacy user). Treat
+     *                       as "no restriction" so existing accounts don't break
+     *                       the moment the scope feature ships.
+     *   - []              → column is '[]' (explicitly configured with no
+     *                       entries). Treat as "deny everything" — the admin
+     *                       did this on purpose.
+     *   - ['x', 'y', ...] → real allow-list.
+     */
+    const parseScopeColumn = (v: any): string[] | null => {
+      if (v === null || v === undefined) return null;
+      if (Array.isArray(v)) return v.map(String);
+      const s = String(v).trim();
+      if (s === '') return null;
+      try {
+        const parsed = JSON.parse(s);
+        if (!Array.isArray(parsed)) return null;
+        return parsed.map(String);
+      } catch { return null; }
+    };
+
+    const getQAScope = async (userId: any): Promise<{ departments: string[] | null; brands: string[] | null } | null> => {
       if (!userId) return null;
       const u = await db.prepare("SELECT role, allowed_departments, allowed_brands FROM users WHERE id = ?").get(userId) as any;
       if (!u || u.role !== 'qa') return null;
       return {
-        departments: parseJsonArray(u.allowed_departments),
-        brands: parseJsonArray(u.allowed_brands),
+        departments: parseScopeColumn(u.allowed_departments),
+        brands: parseScopeColumn(u.allowed_brands),
       };
     };
 
     /**
-     * TL brand scope — list of brand values this TL is authorized to view.
-     * Returns null for non-TLs so callers can short-circuit cleanly.
+     * TL brand scope. Same null/[]/[...] tri-state as QA above.
+     * Returns null when the caller isn't a TL at all (so non-TL paths
+     * skip the brand filter completely).
      */
-    const getTLBrandScope = async (userId: any): Promise<string[] | null> => {
-      if (!userId) return null;
+    const getTLBrandScope = async (userId: any): Promise<string[] | null | undefined> => {
+      if (!userId) return undefined;
       const u = await db.prepare("SELECT role, allowed_brands FROM users WHERE id = ?").get(userId) as any;
-      if (!u || u.role !== 'tl') return null;
-      return parseJsonArray(u.allowed_brands);
+      if (!u || u.role !== 'tl') return undefined;
+      return parseScopeColumn(u.allowed_brands);
     };
 
     /**
@@ -619,12 +642,13 @@ async function startServer() {
      * and `aliases.agentJoin` is the joined users table alias (for QA's
      * department filter — TLs only need brand).
      *
-     *  - returns { clause: '', params: [] } if the caller has no scope rules
-     *  - returns " AND 1=0 " when the caller's arrays are empty, so a
-     *    misconfigured account stays blocked instead of leaking data.
+     * Scope policy:
+     *   - column NULL (legacy user)        → no filter, see everything role allows
+     *   - column [] (explicitly empty)     → "AND 1=0", deny everything
+     *   - column [...]                     → enforce the allow-list
      *
-     *  Name kept as buildQAScopeClause for backwards-compat with the many
-     *  call sites that already use it — the body now also handles TLs.
+     * Name kept as buildQAScopeClause for backwards-compat with the many
+     * call sites that already use it — the body also handles TLs.
      */
     const buildQAScopeClause = async (
       userId: any,
@@ -634,20 +658,35 @@ async function startServer() {
       if (role === 'qa') {
         const scope = await getQAScope(userId);
         if (!scope) return { clause: '', params: [] };
-        if (scope.departments.length === 0 || scope.brands.length === 0) {
+        const parts: string[] = [];
+        const params: any[] = [];
+        // Brands
+        if (scope.brands === null) {
+          // legacy — unrestricted
+        } else if (scope.brands.length === 0) {
           return { clause: ' AND 1=0 ', params: [] };
+        } else {
+          parts.push(`${aliases.e}.brand IN (${scope.brands.map(() => '?').join(',')})`);
+          params.push(...scope.brands);
         }
-        const brandPh = scope.brands.map(() => '?').join(',');
-        const depPh = scope.departments.map(() => '?').join(',');
-        const clause = ` AND ${aliases.e}.brand IN (${brandPh}) AND ${aliases.agentJoin}.department IN (${depPh}) `;
-        return { clause, params: [...scope.brands, ...scope.departments] };
+        // Departments
+        if (scope.departments === null) {
+          // legacy — unrestricted
+        } else if (scope.departments.length === 0) {
+          return { clause: ' AND 1=0 ', params: [] };
+        } else {
+          parts.push(`${aliases.agentJoin}.department IN (${scope.departments.map(() => '?').join(',')})`);
+          params.push(...scope.departments);
+        }
+        if (!parts.length) return { clause: '', params: [] };
+        return { clause: ` AND ${parts.join(' AND ')} `, params };
       }
 
       if (role === 'tl') {
         const brands = await getTLBrandScope(userId);
-        if (!brands) return { clause: '', params: [] };
-        // Deny-by-default — a TL with no assigned brands sees nothing.
-        if (brands.length === 0) return { clause: ' AND 1=0 ', params: [] };
+        if (brands === undefined) return { clause: '', params: [] }; // not a TL
+        if (brands === null) return { clause: '', params: [] };       // legacy — unrestricted
+        if (brands.length === 0) return { clause: ' AND 1=0 ', params: [] }; // explicit deny
         const brandPh = brands.map(() => '?').join(',');
         return { clause: ` AND ${aliases.e}.brand IN (${brandPh}) `, params: [...brands] };
       }
@@ -1906,9 +1945,11 @@ async function startServer() {
       if (role === 'qa') {
         const scope = await getQAScope(callerId);
         if (scope) {
-          if (scope.departments.length === 0 || scope.brands.length === 0) {
+          // Brands [] OR Departments [] = explicit deny.
+          // Departments null = legacy, no agent-list filter.
+          if (scope.brands?.length === 0 || scope.departments?.length === 0) {
             agentsQuery += " AND 1=0";
-          } else {
+          } else if (scope.departments && scope.departments.length > 0) {
             const ph = scope.departments.map(() => '?').join(',');
             agentsQuery += ` AND department IN (${ph})`;
             agentsParams.push(...scope.departments);
@@ -1984,9 +2025,9 @@ async function startServer() {
         if (role === 'qa') {
           const scope = await getQAScope(user_id);
           if (scope) {
-            if (scope.departments.length === 0 || scope.brands.length === 0) {
+            if (scope.brands?.length === 0 || scope.departments?.length === 0) {
               agentsQuery += " AND 1=0";
-            } else {
+            } else if (scope.departments && scope.departments.length > 0) {
               const ph = scope.departments.map(() => '?').join(',');
               agentsQuery += ` AND department IN (${ph})`;
               agentsParams.push(...scope.departments);
@@ -2213,12 +2254,14 @@ async function startServer() {
         let agentParams: any[] = [];
         if (role === 'qa') {
           const scope = await getQAScope(user_id);
-          if (scope && (scope.departments.length === 0 || scope.brands.length === 0)) {
-            agentsQuery += " AND 1=0";
-          } else if (scope && scope.departments.length > 0) {
-            const ph = scope.departments.map(() => '?').join(',');
-            agentsQuery += ` AND department IN (${ph})`;
-            agentParams.push(...scope.departments);
+          if (scope) {
+            if (scope.brands?.length === 0 || scope.departments?.length === 0) {
+              agentsQuery += " AND 1=0";
+            } else if (scope.departments && scope.departments.length > 0) {
+              const ph = scope.departments.map(() => '?').join(',');
+              agentsQuery += ` AND department IN (${ph})`;
+              agentParams.push(...scope.departments);
+            }
           }
         }
 
@@ -2341,13 +2384,18 @@ async function startServer() {
         if (restrictToSelf) {
           const scope = await getQAScope(user_id);
           if (scope) {
-            if (scope.brands.length === 0 || scope.departments.length === 0) {
+            // Explicit empty array on either dimension = deny everything.
+            if (scope.brands?.length === 0 || scope.departments?.length === 0) {
               dateJoinConds.push("1=0");
             } else {
-              dateJoinConds.push(`e.brand IN (${scope.brands.map(() => '?').join(',')})`);
-              joinParams.push(...scope.brands);
-              dateJoinConds.push(`EXISTS (SELECT 1 FROM users a2 WHERE a2.id = e.agent_id AND a2.department IN (${scope.departments.map(() => '?').join(',')}))`);
-              joinParams.push(...scope.departments);
+              if (scope.brands && scope.brands.length > 0) {
+                dateJoinConds.push(`e.brand IN (${scope.brands.map(() => '?').join(',')})`);
+                joinParams.push(...scope.brands);
+              }
+              if (scope.departments && scope.departments.length > 0) {
+                dateJoinConds.push(`EXISTS (SELECT 1 FROM users a2 WHERE a2.id = e.agent_id AND a2.department IN (${scope.departments.map(() => '?').join(',')}))`);
+                joinParams.push(...scope.departments);
+              }
             }
           }
         }
