@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useAuth } from '../context/AuthContext';
 import { motion, AnimatePresence } from 'motion/react';
@@ -65,6 +65,25 @@ export default function EvaluationForm() {
   const [showCriticalModal, setShowCriticalModal] = useState(false);
   // Draft selection inside the modal — only committed to formData on confirm.
   const [criticalReasonDraft, setCriticalReasonDraft] = useState<string[]>([]);
+
+  // Floating score chip — shows when the header score scrolls out of view.
+  // We watch the header card with IntersectionObserver and flip a flag.
+  const headerRef = useRef<HTMLDivElement>(null);
+  const [showStickyScore, setShowStickyScore] = useState(false);
+  useEffect(() => {
+    const el = headerRef.current;
+    if (!el || typeof IntersectionObserver === 'undefined') return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        // Show the chip when the header score is NO LONGER intersecting
+        // the viewport (user has scrolled past it).
+        setShowStickyScore(!entries[0].isIntersecting);
+      },
+      { threshold: 0, rootMargin: '-60px 0px 0px 0px' }
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, []);
   // Tracks the draft this form is currently bound to. When set, Save as Draft
   // updates the existing record instead of creating a new one, and a successful
   // submit marks the draft 'completed' server-side.
@@ -739,8 +758,35 @@ export default function EvaluationForm() {
       {actionModal}
       {criticalModal}
 
+      {/* Floating sticky score — appears when the header score scrolls out */}
+      {showStickyScore && (() => {
+        const score = calculateScore();
+        const tone =
+          score >= 90 ? 'text-emerald-500 border-emerald-500/30 bg-emerald-500/10'
+          : score >= 75 ? 'text-amber-500 border-amber-500/30 bg-amber-500/10'
+          : 'text-rose-500 border-rose-500/30 bg-rose-500/10';
+        return (
+          <div
+            className="fixed top-24 right-4 sm:right-6 z-40 pointer-events-none"
+            aria-hidden
+          >
+            <div className={`pointer-events-auto flex items-center gap-3 px-4 py-2.5 rounded-2xl border backdrop-blur-md shadow-xl shadow-zinc-900/10 dark:shadow-black/40 ${tone} animate-in fade-in slide-in-from-top-2 duration-200`}>
+              <div className="flex flex-col items-end">
+                <span className="text-[9px] font-black uppercase tracking-widest opacity-70 leading-none">Score</span>
+                <span className="text-2xl font-black tracking-tighter leading-none mt-0.5">{score}%</span>
+              </div>
+              {formData.force_zero_score && (
+                <span className="px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wider bg-rose-600 text-white">
+                  Critical
+                </span>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Header Block */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center bg-white dark:bg-zinc-950/80 p-4 sm:p-6 lg:p-8 rounded-[2rem] border border-zinc-100 dark:border-zinc-800 relative shadow-sm dark:shadow-inner overflow-hidden">
+      <div ref={headerRef} className="flex flex-col md:flex-row justify-between items-start md:items-center bg-white dark:bg-zinc-950/80 p-4 sm:p-6 lg:p-8 rounded-[2rem] border border-zinc-100 dark:border-zinc-800 relative shadow-sm dark:shadow-inner overflow-hidden">
         <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-600/5 blur-[80px] -z-10" />
         <div className="flex items-center gap-4">
           <div className="p-3 bg-indigo-500/10 rounded-2xl border border-indigo-500/20 text-indigo-600 dark:text-emerald-500">
