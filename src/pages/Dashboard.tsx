@@ -219,8 +219,10 @@ export default function Dashboard() {
 
 
 
-      {/* QA Productivity — calls registered per Quality user. Hidden from Agents. */}
-      {user?.role !== 'agent' && <QACallsCard />}
+      {/* QA Productivity — calls registered per Quality user.
+          Only QAs (their own count) and Supervisors (whole team) see this.
+          Hidden from TLs and Agents — they don't manage QA throughput. */}
+      {(user?.role === 'qa' || user?.role === 'supervisor') && <QACallsCard />}
 
       {user?.role === 'agent' && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6 lg:gap-8">
