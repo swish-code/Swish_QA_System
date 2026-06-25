@@ -245,12 +245,23 @@ export default function EvaluationForm() {
         }
       });
 
-      // QA scope — strip brands this user isn't allowed to evaluate. The
-      // server enforces the same rule on submit; this just keeps the UI
-      // honest. Empty allowed list = no brands shown.
+      // QA scope — strip brands this user isn't allowed to evaluate.
+      // Matches the backend's tri-state semantic: an EMPTY allowed_brands
+      // array means "unrestricted" (legacy user or scope never configured),
+      // so we only filter when the array has at least one entry. Same rule
+      // applies if the stored brand isn't in the active list any more (e.g.
+      // after a brand rename) — we just show the full active list rather
+      // than locking the QA out of every brand.
       if (user?.role === 'qa') {
-        const allowed = (user as any).allowed_brands || [];
-        options.brand = options.brand.filter((b: any) => allowed.includes(b.value));
+        const allowed: string[] = (user as any).allowed_brands || [];
+        if (allowed.length > 0) {
+          const intersection = options.brand.filter((b: any) => allowed.includes(b.value));
+          if (intersection.length > 0) {
+            options.brand = intersection;
+          }
+          // else: stale config (none of the QA's allowed brands are still
+          // active) → leave the full list so the form is usable.
+        }
       }
 
       setFormOptions(options);
@@ -286,13 +297,17 @@ export default function EvaluationForm() {
       })
       .then(data => {
         // QA scope: filter agents down to those whose department is in the
-        // caller's allowed list. Server still enforces, this just keeps the
-        // dropdown honest.
+        // caller's allowed list. Same tri-state rule as the brand filter:
+        // an empty allowed list = unrestricted (legacy or unconfigured),
+        // and if filtering wipes out every option we fall back to the full
+        // list so the form is never unusable.
         const allowedDeps: string[] = user?.role === 'qa' ? ((user as any).allowed_departments || []) : [];
-        const filtered = data
-          .filter((u: UserType) => u.role === 'agent')
-          .filter((u: UserType) => user?.role !== 'qa' || allowedDeps.includes(u.department));
-        setAgents(filtered);
+        let agentsOnly = data.filter((u: UserType) => u.role === 'agent');
+        if (user?.role === 'qa' && allowedDeps.length > 0) {
+          const scoped = agentsOnly.filter((u: UserType) => allowedDeps.includes(u.department));
+          if (scoped.length > 0) agentsOnly = scoped;
+        }
+        setAgents(agentsOnly);
       })
       .catch(err => console.error("Error fetching users:", err));
     
