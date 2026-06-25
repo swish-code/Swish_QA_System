@@ -22,7 +22,8 @@ import {
   FileText,
   Search,
   Check,
-  Bookmark
+  Bookmark,
+  Sparkles
 } from 'lucide-react';
 import { User as UserType } from '../types';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
@@ -118,6 +119,8 @@ export default function EvaluationForm() {
     // QA-selected reasons that justify the forced zero (multi-select).
     // Empty when force_zero_score is false.
     critical_failure_reasons: [] as string[],
+    // QA marks an exceptional call as WOW — surfaces on /wow-calls.
+    is_wow: false,
     feedback: {
       general: '',
       internal: '',
@@ -825,6 +828,37 @@ export default function EvaluationForm() {
           >
             <AlertCircle size={14} />
             {formData.force_zero_score ? 'Critical Failure (Edit)' : 'Mark as Critical (0%)'}
+          </button>
+
+          {/* WOW Calls — QA flag for exceptional calls. Toggles instantly
+              on already-saved evaluations so it doesn't need a re-submit. */}
+          <button
+            type="button"
+            disabled={isReadOnly}
+            onClick={async () => {
+              const next = !formData.is_wow;
+              setFormData((prev: any) => ({ ...prev, is_wow: next }));
+              // If editing a saved evaluation, persist the flag immediately
+              // so the WOW Calls page reflects it without waiting for submit.
+              if (id) {
+                try {
+                  await fetch(`/api/evaluations/${id}/wow`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ is_wow: next }),
+                  });
+                } catch (err) { console.error('WOW toggle failed', err); }
+              }
+            }}
+            title={formData.is_wow ? 'Remove WOW flag' : 'Mark as WOW Call'}
+            className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest border transition-all flex items-center gap-2 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed ${
+              formData.is_wow
+                ? 'bg-amber-500 text-white border-amber-400 shadow-lg shadow-amber-500/30 hover:bg-amber-400'
+                : 'bg-white dark:bg-zinc-900 text-amber-600 dark:text-amber-400 border-amber-300 dark:border-amber-900/40 hover:bg-amber-50 dark:hover:bg-amber-950/30'
+            }`}
+          >
+            <Sparkles size={14} className={formData.is_wow ? 'animate-pulse' : ''} />
+            {formData.is_wow ? 'WOW Call ✓' : 'WOW Call'}
           </button>
 
           <div className="text-right">

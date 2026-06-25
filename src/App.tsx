@@ -20,6 +20,7 @@ import ActivityAudit from './pages/ActivityAudit';
 import Analysis from './pages/Analysis';
 import QAKPIs from './pages/QAKPIs';
 import AccuracyCases from './pages/AccuracyCases';
+import WOWCalls from './pages/WOWCalls';
 
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   const { user, isLoading } = useAuth();
@@ -54,6 +55,7 @@ export default function App() {
           <Route path="/settings/form" element={<ProtectedRoute><FormSettings /></ProtectedRoute>} />
           <Route path="/qa-kpis" element={<ProtectedRoute><QAKPIs /></ProtectedRoute>} />
           <Route path="/accuracy-cases" element={<ProtectedRoute><AccuracyCases /></ProtectedRoute>} />
+          <Route path="/wow-calls" element={<ProtectedRoute><WOWCalls /></ProtectedRoute>} />
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>
         </Router>

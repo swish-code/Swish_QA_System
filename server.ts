@@ -177,6 +177,11 @@ async function startServer() {
     try { await db.exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS allowed_departments TEXT"); } catch(e) {}
     try { await db.exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS allowed_brands TEXT"); } catch(e) {}
 
+    // WOW Calls — QA can flag an exceptional call as a "WOW" for the
+    // company-wide showcase page. Tri-state boolean stored as INTEGER for
+    // SQLite compat; default 0 leaves every existing call untouched.
+    try { await db.exec("ALTER TABLE evaluations ADD COLUMN IF NOT EXISTS is_wow INTEGER DEFAULT 0"); } catch(e) {}
+
     // -----------------------------------------------------------------
     // QA KPI infrastructure — four metrics aggregated into a monthly
     // score per QA: Calls (40%) + Duration (10%) + Tasks (20%) +
@@ -878,7 +883,7 @@ async function startServer() {
 
     // Evaluations
     app.get("/api/evaluations", async (req, res) => {
-      const { user_id, role, agent_id, from_date, to_date, status, search, coaching_status } = req.query;
+      const { user_id, role, agent_id, from_date, to_date, status, search, coaching_status, wow_only } = req.query;
       const page = parseInt(req.query.page as string) || 1;
       const limit = parseInt(req.query.limit as string) || 10;
       const offset = (page - 1) * limit;
@@ -951,6 +956,11 @@ async function startServer() {
         baseQuery += " AND (a.display_name LIKE ? OR e.brand LIKE ?)";
         const searchPattern = `%${search}%`;
         params.push(searchPattern, searchPattern);
+      }
+
+      // WOW Calls filter — drives the dedicated /wow-calls page.
+      if (wow_only === '1' || wow_only === 'true') {
+        baseQuery += " AND e.is_wow = 1";
       }
 
       // Coaching filter: 'coached' = at least one completed coaching session
@@ -1037,15 +1047,15 @@ async function startServer() {
     });
 
     app.post("/api/evaluations", async (req, res) => {
-      const { date, agent_id, qa_id, brand, call_type, final_score, critical_failure, data, draft_id } = req.body;
+      const { date, agent_id, qa_id, brand, call_type, final_score, critical_failure, data, draft_id, is_wow } = req.body;
 
       // Workflow rule:
       //   score >= 90  → goes straight to Agent + TL (no approval needed)
       //   score <  90  → goes to TL only; Agent does NOT see it until cycle ends
       const status = final_score >= 90 ? 'Sent to Agent' : 'Pending Review';
 
-      const result = await db.prepare("INSERT INTO evaluations (date, agent_id, qa_id, brand, call_type, final_score, critical_failure, data, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
-        .run(date, agent_id, qa_id, brand, call_type, final_score, critical_failure ? 1 : 0, JSON.stringify(data), status);
+      const result = await db.prepare("INSERT INTO evaluations (date, agent_id, qa_id, brand, call_type, final_score, critical_failure, data, status, is_wow) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .run(date, agent_id, qa_id, brand, call_type, final_score, critical_failure ? 1 : 0, JSON.stringify(data), status, is_wow ? 1 : 0);
 
       const evaluation_id = result.lastInsertRowid;
 
@@ -1098,14 +1108,29 @@ async function startServer() {
     });
 
     app.put("/api/evaluations/:id", async (req, res) => {
-      const { date, agent_id, qa_id, brand, call_type, final_score, critical_failure, data, status } = req.body;
+      const { date, agent_id, qa_id, brand, call_type, final_score, critical_failure, data, status, is_wow } = req.body;
       await db.prepare(`
         UPDATE evaluations
         SET date = ?, agent_id = ?, qa_id = ?, brand = ?, call_type = ?,
-            final_score = ?, critical_failure = ?, data = ?, status = ?
+            final_score = ?, critical_failure = ?, data = ?, status = ?, is_wow = ?
         WHERE id = ?
-      `).run(date, agent_id, qa_id, brand, call_type, final_score, critical_failure ? 1 : 0, JSON.stringify(data), status || 'completed', req.params.id);
+      `).run(date, agent_id, qa_id, brand, call_type, final_score, critical_failure ? 1 : 0, JSON.stringify(data), status || 'completed', is_wow ? 1 : 0, req.params.id);
       res.json({ success: true });
+    });
+
+    // Toggle a call's WOW flag — QA + Supervisor only. Lightweight endpoint
+    // so the WOW button can flip the badge from anywhere (All Calls list,
+    // evaluation detail page, the WOW Calls page itself) without rebuilding
+    // the entire evaluation payload.
+    app.post("/api/evaluations/:id/wow", async (req, res) => {
+      try {
+        const { is_wow } = req.body;
+        await db.prepare("UPDATE evaluations SET is_wow = ? WHERE id = ?")
+          .run(is_wow ? 1 : 0, req.params.id);
+        res.json({ success: true, is_wow: !!is_wow });
+      } catch (e: any) {
+        res.status(500).json({ error: e.message });
+      }
     });
 
     // Escalations & Workflow
