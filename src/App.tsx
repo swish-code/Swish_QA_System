@@ -21,6 +21,8 @@ import Analysis from './pages/Analysis';
 import QAKPIs from './pages/QAKPIs';
 import AccuracyCases from './pages/AccuracyCases';
 import WOWCalls from './pages/WOWCalls';
+import CCOperations from './pages/CCOperations';
+import TLKPIs from './pages/TLKPIs';
 
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   const { user, isLoading } = useAuth();
@@ -56,6 +58,8 @@ export default function App() {
           <Route path="/qa-kpis" element={<ProtectedRoute><QAKPIs /></ProtectedRoute>} />
           <Route path="/accuracy-cases" element={<ProtectedRoute><AccuracyCases /></ProtectedRoute>} />
           <Route path="/wow-calls" element={<ProtectedRoute><WOWCalls /></ProtectedRoute>} />
+          <Route path="/cc-operations" element={<ProtectedRoute><CCOperations /></ProtectedRoute>} />
+          <Route path="/tl-kpis" element={<ProtectedRoute><TLKPIs /></ProtectedRoute>} />
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>
         </Router>

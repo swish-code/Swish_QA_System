@@ -16,7 +16,8 @@ import {
   Activity,
   Trophy,
   ShieldCheck,
-  Sparkles
+  Sparkles,
+  Briefcase
 } from 'lucide-react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
@@ -42,6 +43,7 @@ export default function Sidebar() {
     { name: 'New Evaluation', icon: Zap, path: '/evaluate', roles: ['qa'] },
     { name: 'All calls', icon: FileCheck, path: '/audits', roles: ['qa', 'supervisor', 'cc_supervisor', 'tl', 'agent'] },
     { name: 'Analysis Deck', icon: Activity, path: '/analysis', roles: ['qa', 'supervisor', 'cc_supervisor', 'tl', 'agent'] },
+    { name: 'CC Operations', icon: Briefcase, path: '/cc-operations', roles: ['cc_supervisor', 'supervisor'] },
     { name: 'Team Performance', icon: BarChart3, path: '/team', roles: ['tl', 'supervisor', 'cc_supervisor'] },
     { name: 'LOB Performance', icon: TrendingUp, path: '/lob-performance', roles: ['qa', 'supervisor', 'cc_supervisor', 'tl', 'agent'] },
     { name: 'Coaching', icon: MessageSquare, path: '/coaching', roles: ['tl', 'supervisor', 'cc_supervisor', 'agent'] },
@@ -49,6 +51,7 @@ export default function Sidebar() {
     { name: 'Drop Point', icon: BarChart3, path: '/drop-point', roles: ['qa', 'supervisor', 'cc_supervisor', 'tl'] },
     { name: 'WOW Calls', icon: Sparkles, path: '/wow-calls', roles: ['qa', 'supervisor', 'cc_supervisor', 'tl'] },
     { name: 'QA KPIs', icon: Trophy, path: '/qa-kpis', roles: ['qa', 'supervisor', 'cc_supervisor'] },
+    { name: 'TL KPIs', icon: Trophy, path: '/tl-kpis', roles: ['cc_supervisor', 'supervisor'] },
     { name: 'Accuracy Cases', icon: ShieldCheck, path: '/accuracy-cases', roles: ['qa', 'tl', 'supervisor', 'cc_supervisor'] },
     { name: 'User Management', icon: Users, path: '/users', roles: ['supervisor'] },
     { name: 'Activity Audit', icon: History, path: '/activity-audit', roles: ['supervisor', 'cc_supervisor', 'qa', 'tl'] },

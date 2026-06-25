@@ -2883,6 +2883,422 @@ async function startServer() {
       }
     });
 
+    // =================================================================
+    // CC Operations — per-TL view for the Call-Center Supervisor.
+    //   Lists each TL with rollups: team size, avg team score, coaching
+    //   counts, escalation counts + SLA stats. Drill-down endpoint adds
+    //   the actual rows.
+    //
+    //   role === 'cc_supervisor'  →  only TLs whose cc_supervisor_id
+    //                                 matches the caller
+    //   role === 'supervisor'     →  every TL
+    // =================================================================
+
+    const DEFAULT_ESCALATION_SLA_HOURS = 24;
+
+    app.get("/api/cc/tl-ops", async (req, res) => {
+      try {
+        const { user_id, role, from_date, to_date } = req.query;
+
+        // Pick the TL roster the caller is allowed to see.
+        let tlsQuery = "SELECT id, display_name, username FROM users WHERE role = 'tl'";
+        const tlsParams: any[] = [];
+        if (role === 'cc_supervisor') {
+          tlsQuery += " AND cc_supervisor_id = ?";
+          tlsParams.push(user_id);
+        }
+        tlsQuery += " ORDER BY display_name";
+        const tls = await db.prepare(tlsQuery).all(...tlsParams) as any[];
+
+        // Date range — default to current month if neither provided.
+        const today = new Date();
+        const monthStart = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-01`;
+        const monthEnd = today.toISOString().split('T')[0];
+        const fromD = (from_date as string) || monthStart;
+        const toD = (to_date as string) || monthEnd;
+
+        // SLA threshold — pull cc_supervisor's preference if set; for now
+        // use the global default.
+        const slaHours = DEFAULT_ESCALATION_SLA_HOURS;
+        const slaSeconds = slaHours * 3600;
+
+        const results = await Promise.all(tls.map(async (tl: any) => {
+          // Team size + avg team score over the window.
+          const teamSize = await db.prepare(
+            "SELECT COUNT(*) AS c FROM users WHERE role = 'agent' AND tl_id = ?"
+          ).get(tl.id) as any;
+
+          const teamScoreRow = await db.prepare(`
+            SELECT AVG(e.final_score) AS avg_score, COUNT(*) AS audits
+            FROM evaluations e JOIN users a ON e.agent_id = a.id
+            WHERE a.tl_id = ? AND e.date >= ? AND e.date <= ?
+          `).get(tl.id, fromD, toD) as any;
+
+          // Coaching rollup: split by status + average session duration.
+          const coachingRows = await db.prepare(`
+            SELECT status, created_at, completed_at, session_started_at
+            FROM coaching_requests
+            WHERE tl_id = ?
+              AND substr(CAST(created_at AS TEXT), 1, 10) >= ?
+              AND substr(CAST(created_at AS TEXT), 1, 10) <= ?
+          `).all(tl.id, fromD, toD) as any[];
+          let coachCompleted = 0, coachPending = 0, coachInProgress = 0;
+          let totalSessionSec = 0, sessionsWithDuration = 0;
+          for (const c of coachingRows) {
+            if (c.status === 'Completed') coachCompleted++;
+            else if (c.status === 'In Progress') coachInProgress++;
+            else coachPending++;
+            if (c.session_started_at && c.completed_at) {
+              const dur = (new Date(c.completed_at).getTime() - new Date(c.session_started_at).getTime()) / 1000;
+              if (dur > 0) { totalSessionSec += dur; sessionsWithDuration++; }
+            }
+          }
+          const avgSessionMin = sessionsWithDuration
+            ? Math.round((totalSessionSec / sessionsWithDuration) / 60)
+            : 0;
+
+          // Escalations — only the ones routed back to this TL's team
+          // (escalation against an evaluation whose agent reports to them).
+          const escalationRows = await db.prepare(`
+            SELECT el.created_at AS escalated_at,
+                   (SELECT MIN(el2.created_at) FROM escalation_logs el2
+                    WHERE el2.evaluation_id = el.evaluation_id
+                      AND el2.action <> 'escalated'
+                      AND el2.created_at > el.created_at) AS responded_at
+            FROM escalation_logs el
+            JOIN evaluations e ON el.evaluation_id = e.id
+            JOIN users a ON e.agent_id = a.id
+            WHERE el.action = 'escalated' AND a.tl_id = ?
+              AND substr(CAST(el.created_at AS TEXT), 1, 10) >= ?
+              AND substr(CAST(el.created_at AS TEXT), 1, 10) <= ?
+          `).all(tl.id, fromD, toD) as any[];
+
+          let escWithinSla = 0, escOverdue = 0, escOpen = 0;
+          let totalResponseSec = 0, respondedCount = 0;
+          const nowMs = Date.now();
+          for (const es of escalationRows) {
+            const escMs = new Date(es.escalated_at).getTime();
+            if (es.responded_at) {
+              const dt = (new Date(es.responded_at).getTime() - escMs) / 1000;
+              if (dt <= slaSeconds) escWithinSla++; else escOverdue++;
+              totalResponseSec += dt; respondedCount++;
+            } else {
+              const elapsed = (nowMs - escMs) / 1000;
+              if (elapsed > slaSeconds) escOverdue++;
+              else escOpen++;
+            }
+          }
+          const avgResponseHours = respondedCount
+            ? Math.round((totalResponseSec / respondedCount / 3600) * 10) / 10
+            : 0;
+
+          return {
+            id: tl.id,
+            display_name: tl.display_name,
+            username: tl.username,
+            team_size: Number(teamSize?.c || 0),
+            audits: Number(teamScoreRow?.audits || 0),
+            avg_team_score: teamScoreRow?.avg_score
+              ? Math.round(Number(teamScoreRow.avg_score) * 10) / 10 : 0,
+            coaching: {
+              total: coachingRows.length,
+              completed: coachCompleted,
+              in_progress: coachInProgress,
+              pending: coachPending,
+              avg_session_minutes: avgSessionMin,
+            },
+            escalations: {
+              total: escalationRows.length,
+              within_sla: escWithinSla,
+              overdue: escOverdue,
+              open: escOpen,
+              avg_response_hours: avgResponseHours,
+              sla_hours: slaHours,
+            },
+          };
+        }));
+
+        res.json({ from_date: fromD, to_date: toD, sla_hours: slaHours, tls: results });
+      } catch (e: any) {
+        console.error("/api/cc/tl-ops failed:", e);
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    // Drill-down — every coaching and escalation row for a single TL,
+    // useful for the CC Supervisor's TL detail page.
+    app.get("/api/cc/tl-ops/:tl_id", async (req, res) => {
+      try {
+        const tlId = req.params.tl_id;
+        const { from_date, to_date } = req.query;
+        const today = new Date();
+        const monthStart = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-01`;
+        const monthEnd = today.toISOString().split('T')[0];
+        const fromD = (from_date as string) || monthStart;
+        const toD = (to_date as string) || monthEnd;
+
+        const tl = await db.prepare("SELECT id, display_name, username FROM users WHERE id = ?").get(tlId) as any;
+        if (!tl) return res.status(404).json({ error: "TL not found" });
+
+        const coachings = await db.prepare(`
+          SELECT cr.id, cr.evaluation_id, cr.status, cr.created_at,
+                 cr.agent_approved_at, cr.session_started_at, cr.completed_at,
+                 cr.tl_comment, cr.cc_supervisor_note,
+                 a.display_name AS agent_name
+          FROM coaching_requests cr
+          LEFT JOIN users a ON cr.agent_id = a.id
+          WHERE cr.tl_id = ?
+            AND substr(CAST(cr.created_at AS TEXT), 1, 10) >= ?
+            AND substr(CAST(cr.created_at AS TEXT), 1, 10) <= ?
+          ORDER BY cr.created_at DESC
+        `).all(tlId, fromD, toD) as any[];
+
+        const escalations = await db.prepare(`
+          SELECT el.id, el.evaluation_id, el.user_id, el.role, el.action,
+                 el.comment, el.created_at, el.cc_supervisor_note,
+                 e.final_score, e.brand, e.call_type, e.date AS call_date,
+                 a.display_name AS agent_name,
+                 (SELECT MIN(el2.created_at) FROM escalation_logs el2
+                  WHERE el2.evaluation_id = el.evaluation_id
+                    AND el2.action <> 'escalated'
+                    AND el2.created_at > el.created_at) AS responded_at
+          FROM escalation_logs el
+          JOIN evaluations e ON el.evaluation_id = e.id
+          JOIN users a ON e.agent_id = a.id
+          WHERE el.action = 'escalated' AND a.tl_id = ?
+            AND substr(CAST(el.created_at AS TEXT), 1, 10) >= ?
+            AND substr(CAST(el.created_at AS TEXT), 1, 10) <= ?
+          ORDER BY el.created_at DESC
+        `).all(tlId, fromD, toD) as any[];
+
+        res.json({ tl, from_date: fromD, to_date: toD, coachings, escalations });
+      } catch (e: any) {
+        console.error("/api/cc/tl-ops/:tl_id failed:", e);
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    // ===== Phase 3: CC Supervisor notes =====
+    // Notes live on the related row itself (coaching_requests /
+    // escalation_logs) — single text field per row, no separate table.
+    try { await db.exec("ALTER TABLE coaching_requests ADD COLUMN IF NOT EXISTS cc_supervisor_note TEXT"); } catch(e) {}
+    try { await db.exec("ALTER TABLE escalation_logs ADD COLUMN IF NOT EXISTS cc_supervisor_note TEXT"); } catch(e) {}
+
+    app.post("/api/cc/notes/coaching/:id", async (req, res) => {
+      try {
+        const { note } = req.body;
+        await db.prepare(
+          "UPDATE coaching_requests SET cc_supervisor_note = ? WHERE id = ?"
+        ).run(note ?? null, req.params.id);
+        res.json({ success: true });
+      } catch (e: any) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    app.post("/api/cc/notes/escalation/:id", async (req, res) => {
+      try {
+        const { note } = req.body;
+        await db.prepare(
+          "UPDATE escalation_logs SET cc_supervisor_note = ? WHERE id = ?"
+        ).run(note ?? null, req.params.id);
+        res.json({ success: true });
+      } catch (e: any) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    // ===== Phase 3: SLA-breach notifications for cc_supervisor =====
+    // Lightweight scan on every cc_supervisor request to /cc/tl-ops:
+    // looks for overdue escalations the cc_supervisor hasn't been told
+    // about yet (uses a marker in notifications.message to dedupe).
+    const scanSlaBreachesForCC = async (ccSupervisorId: any) => {
+      try {
+        const breached = await db.prepare(`
+          SELECT el.id, el.evaluation_id, el.created_at,
+                 a.display_name AS agent_name, tl.display_name AS tl_name
+          FROM escalation_logs el
+          JOIN evaluations e ON el.evaluation_id = e.id
+          JOIN users a ON e.agent_id = a.id
+          JOIN users tl ON a.tl_id = tl.id
+          WHERE el.action = 'escalated'
+            AND tl.cc_supervisor_id = ?
+            AND NOT EXISTS (
+              SELECT 1 FROM escalation_logs el2
+              WHERE el2.evaluation_id = el.evaluation_id
+                AND el2.action <> 'escalated'
+                AND el2.created_at > el.created_at
+            )
+        `).all(ccSupervisorId) as any[];
+
+        const nowMs = Date.now();
+        for (const b of breached) {
+          const ageMs = nowMs - new Date(b.created_at).getTime();
+          if (ageMs < DEFAULT_ESCALATION_SLA_HOURS * 3600 * 1000) continue;
+          const marker = `SLA-ESC-${b.id}`;
+          const seen = await db.prepare(
+            "SELECT id FROM notifications WHERE user_id = ? AND message LIKE ?"
+          ).get(ccSupervisorId, `%${marker}%`) as any;
+          if (seen) continue;
+          await db.prepare(
+            "INSERT INTO notifications (user_id, title, message, evaluation_id) VALUES (?, ?, ?, ?)"
+          ).run(
+            ccSupervisorId,
+            'Escalation SLA Breached',
+            `[${marker}] TL ${b.tl_name} has an open escalation on Agent ${b.agent_name} (call #${b.evaluation_id}) past the ${DEFAULT_ESCALATION_SLA_HOURS}h SLA.`,
+            b.evaluation_id
+          );
+        }
+      } catch (err) {
+        console.error('SLA scan failed:', err);
+      }
+    };
+    // Patch the tl-ops endpoint to also run the scan for cc_supervisors.
+    app.use(async (req, _res, next) => {
+      if (req.path === '/api/cc/tl-ops' && req.query.role === 'cc_supervisor' && req.query.user_id) {
+        scanSlaBreachesForCC(req.query.user_id).catch(() => {});
+      }
+      next();
+    });
+
+    // =================================================================
+    // Phase 4 — TL KPIs (per-month scorecard for Team Leaders)
+    //   Coachings  60%  — count vs target
+    //   Escalations SLA 40%  — % responded within SLA hours
+    // =================================================================
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS tl_kpi_config (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER UNIQUE,
+        coaching_target INTEGER DEFAULT 20,
+        escalation_sla_hours INTEGER DEFAULT 24,
+        weight_coaching REAL DEFAULT 0.6,
+        weight_sla REAL DEFAULT 0.4,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    try {
+      const existing = await db.prepare("SELECT id FROM tl_kpi_config WHERE user_id IS NULL").get();
+      if (!existing) {
+        await db.prepare(
+          "INSERT INTO tl_kpi_config (user_id, coaching_target, escalation_sla_hours, weight_coaching, weight_sla) VALUES (NULL, 20, 24, 0.6, 0.4)"
+        ).run();
+      }
+    } catch (e) { console.error('seed tl_kpi_config defaults failed:', e); }
+
+    const loadTLKPIConfig = async (userId: any) => {
+      let cfg: any = null;
+      if (userId) {
+        cfg = await db.prepare("SELECT * FROM tl_kpi_config WHERE user_id = ?").get(userId);
+      }
+      if (!cfg) cfg = await db.prepare("SELECT * FROM tl_kpi_config WHERE user_id IS NULL").get();
+      return cfg || { coaching_target: 20, escalation_sla_hours: 24, weight_coaching: 0.6, weight_sla: 0.4 };
+    };
+
+    const computeTLKPI = async (tlId: number, month: string) => {
+      const monthStart = `${month}-01`;
+      const [yr, mo] = month.split('-').map(Number);
+      const lastDay = new Date(yr, mo, 0).getDate();
+      const monthEnd = `${month}-${String(lastDay).padStart(2, '0')}`;
+      const cfg = await loadTLKPIConfig(tlId);
+
+      // Coachings: count of coaching_requests where tl_id = TL and any
+      // session started in the window.
+      const coachingsRow = await db.prepare(`
+        SELECT COUNT(*) AS c FROM coaching_requests
+        WHERE tl_id = ?
+          AND substr(CAST(created_at AS TEXT), 1, 10) >= ?
+          AND substr(CAST(created_at AS TEXT), 1, 10) <= ?
+      `).get(tlId, monthStart, monthEnd) as any;
+      const coachingsTotal = Number(coachingsRow?.c || 0);
+      const coachingScore = Math.min(100, (coachingsTotal / Math.max(1, cfg.coaching_target)) * 100);
+
+      // Escalations: % responded within SLA
+      const slaSeconds = cfg.escalation_sla_hours * 3600;
+      const escs = await db.prepare(`
+        SELECT el.created_at,
+               (SELECT MIN(el2.created_at) FROM escalation_logs el2
+                WHERE el2.evaluation_id = el.evaluation_id
+                  AND el2.action <> 'escalated'
+                  AND el2.created_at > el.created_at) AS responded_at
+        FROM escalation_logs el
+        JOIN evaluations e ON el.evaluation_id = e.id
+        JOIN users a ON e.agent_id = a.id
+        WHERE el.action = 'escalated' AND a.tl_id = ?
+          AND substr(CAST(el.created_at AS TEXT), 1, 10) >= ?
+          AND substr(CAST(el.created_at AS TEXT), 1, 10) <= ?
+      `).all(tlId, monthStart, monthEnd) as any[];
+      let within = 0, total = 0;
+      for (const e of escs) {
+        if (!e.responded_at) continue;
+        total++;
+        const dt = (new Date(e.responded_at).getTime() - new Date(e.created_at).getTime()) / 1000;
+        if (dt <= slaSeconds) within++;
+      }
+      const slaScore = total === 0 ? 100 : (within / total) * 100;
+      const totalScore = coachingScore * cfg.weight_coaching + slaScore * cfg.weight_sla;
+
+      return {
+        tl_id: tlId,
+        month,
+        config: cfg,
+        coaching: {
+          total: coachingsTotal,
+          target: cfg.coaching_target,
+          score: Math.round(coachingScore * 10) / 10,
+          weight: cfg.weight_coaching,
+        },
+        escalations: {
+          total: escs.length,
+          responded: total,
+          within_sla: within,
+          sla_hours: cfg.escalation_sla_hours,
+          score: Math.round(slaScore * 10) / 10,
+          weight: cfg.weight_sla,
+        },
+        total_score: Math.round(totalScore * 10) / 10,
+      };
+    };
+
+    app.get("/api/kpi/tl/:user_id", async (req, res) => {
+      try {
+        const tlId = parseInt(req.params.user_id, 10);
+        const month = (req.query.month as string) || new Date().toISOString().slice(0, 7);
+        res.json(await computeTLKPI(tlId, month));
+      } catch (e: any) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    app.get("/api/kpi/tl-summary", async (req, res) => {
+      try {
+        const { user_id, role } = req.query;
+        const month = (req.query.month as string) || new Date().toISOString().slice(0, 7);
+        let tlsQuery = "SELECT id, display_name FROM users WHERE role = 'tl'";
+        const tlsParams: any[] = [];
+        if (role === 'cc_supervisor') {
+          tlsQuery += " AND cc_supervisor_id = ?";
+          tlsParams.push(user_id);
+        }
+        const tls = await db.prepare(tlsQuery).all(...tlsParams) as any[];
+        const results: any[] = [];
+        for (const tl of tls) {
+          const r = await computeTLKPI(tl.id, month);
+          results.push({
+            tl_id: tl.id,
+            tl_name: tl.display_name,
+            coaching_score: r.coaching.score,
+            sla_score: r.escalations.score,
+            total_score: r.total_score,
+          });
+        }
+        results.sort((a, b) => b.total_score - a.total_score);
+        res.json({ month, tls: results });
+      } catch (e: any) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+
     // Advanced Quality Analysis Endpoint / Multi-dimensional metrics
     app.get("/api/stats/analysis", async (req, res) => {
       try {
