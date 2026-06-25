@@ -73,7 +73,10 @@ export default function Sidebar() {
         </div>
       </div>
 
-      <nav className="flex-1 px-2 space-y-1">
+      {/* min-h-0 lets the flex parent shrink the nav so overflow-y-auto
+          actually scrolls instead of pushing the user/logout block out
+          of the viewport. Custom scrollbar styling keeps the bar slim. */}
+      <nav className="flex-1 min-h-0 overflow-y-auto px-2 space-y-1 [scrollbar-width:thin] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:bg-zinc-300 dark:[&::-webkit-scrollbar-thumb]:bg-zinc-700 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-track]:bg-transparent">
         {filteredLinks.map((link) => (
           <NavLink
             key={link.path}
