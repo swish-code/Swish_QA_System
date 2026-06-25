@@ -38,20 +38,20 @@ export default function Sidebar() {
   };
 
   const links = [
-    { name: 'Dashboard', icon: LayoutDashboard, path: '/', roles: ['supervisor', 'qa', 'tl', 'agent'] },
+    { name: 'Dashboard', icon: LayoutDashboard, path: '/', roles: ['supervisor', 'cc_supervisor', 'qa', 'tl', 'agent'] },
     { name: 'New Evaluation', icon: Zap, path: '/evaluate', roles: ['qa'] },
-    { name: 'All calls', icon: FileCheck, path: '/audits', roles: ['qa', 'supervisor', 'tl', 'agent'] },
-    { name: 'Analysis Deck', icon: Activity, path: '/analysis', roles: ['qa', 'supervisor', 'tl', 'agent'] },
-    { name: 'Team Performance', icon: BarChart3, path: '/team', roles: ['tl', 'supervisor'] },
-    { name: 'LOB Performance', icon: TrendingUp, path: '/lob-performance', roles: ['qa', 'supervisor', 'tl', 'agent'] },
-    { name: 'Coaching', icon: MessageSquare, path: '/coaching', roles: ['tl', 'supervisor', 'agent'] },
-    { name: 'Escalations', icon: Bell, path: '/escalations', roles: ['qa', 'tl', 'supervisor'] },
-    { name: 'Drop Point', icon: BarChart3, path: '/drop-point', roles: ['qa', 'supervisor', 'tl'] },
-    { name: 'WOW Calls', icon: Sparkles, path: '/wow-calls', roles: ['qa', 'supervisor', 'tl'] },
-    { name: 'QA KPIs', icon: Trophy, path: '/qa-kpis', roles: ['qa', 'supervisor'] },
-    { name: 'Accuracy Cases', icon: ShieldCheck, path: '/accuracy-cases', roles: ['qa', 'tl', 'supervisor'] },
+    { name: 'All calls', icon: FileCheck, path: '/audits', roles: ['qa', 'supervisor', 'cc_supervisor', 'tl', 'agent'] },
+    { name: 'Analysis Deck', icon: Activity, path: '/analysis', roles: ['qa', 'supervisor', 'cc_supervisor', 'tl', 'agent'] },
+    { name: 'Team Performance', icon: BarChart3, path: '/team', roles: ['tl', 'supervisor', 'cc_supervisor'] },
+    { name: 'LOB Performance', icon: TrendingUp, path: '/lob-performance', roles: ['qa', 'supervisor', 'cc_supervisor', 'tl', 'agent'] },
+    { name: 'Coaching', icon: MessageSquare, path: '/coaching', roles: ['tl', 'supervisor', 'cc_supervisor', 'agent'] },
+    { name: 'Escalations', icon: Bell, path: '/escalations', roles: ['qa', 'tl', 'supervisor', 'cc_supervisor'] },
+    { name: 'Drop Point', icon: BarChart3, path: '/drop-point', roles: ['qa', 'supervisor', 'cc_supervisor', 'tl'] },
+    { name: 'WOW Calls', icon: Sparkles, path: '/wow-calls', roles: ['qa', 'supervisor', 'cc_supervisor', 'tl'] },
+    { name: 'QA KPIs', icon: Trophy, path: '/qa-kpis', roles: ['qa', 'supervisor', 'cc_supervisor'] },
+    { name: 'Accuracy Cases', icon: ShieldCheck, path: '/accuracy-cases', roles: ['qa', 'tl', 'supervisor', 'cc_supervisor'] },
     { name: 'User Management', icon: Users, path: '/users', roles: ['supervisor'] },
-    { name: 'Activity Audit', icon: History, path: '/activity-audit', roles: ['supervisor', 'qa', 'tl'] },
+    { name: 'Activity Audit', icon: History, path: '/activity-audit', roles: ['supervisor', 'cc_supervisor', 'qa', 'tl'] },
     { name: 'Form Settings', icon: Settings, path: '/settings/form', roles: ['supervisor'] },
   ];
 

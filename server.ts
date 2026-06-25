@@ -177,6 +177,10 @@ async function startServer() {
     try { await db.exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS allowed_departments TEXT"); } catch(e) {}
     try { await db.exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS allowed_brands TEXT"); } catch(e) {}
 
+    // Call-Center Supervisor link — TLs report to a single cc_supervisor.
+    // NULL on a TL = unassigned (visible to every cc_supervisor for now).
+    try { await db.exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS cc_supervisor_id INTEGER"); } catch(e) {}
+
     // WOW Calls — QA can flag an exceptional call as a "WOW" for the
     // company-wide showcase page. Tri-state boolean stored as INTEGER for
     // SQLite compat; default 0 leaves every existing call untouched.
@@ -830,7 +834,7 @@ async function startServer() {
     // Users Management
     app.get("/api/users", async (req, res) => {
       const users = await db.prepare(
-        "SELECT id, display_name, username, role, department, tl_id, allowed_departments, allowed_brands FROM users"
+        "SELECT id, display_name, username, role, department, tl_id, cc_supervisor_id, allowed_departments, allowed_brands FROM users"
       ).all() as any[];
       // Parse JSON columns so the client gets real arrays.
       res.json(users.map(u => ({
@@ -841,19 +845,21 @@ async function startServer() {
     });
 
     app.post("/api/users", async (req, res) => {
-      const { display_name, username, password, role, department, tl_id, allowed_departments, allowed_brands } = req.body;
+      const { display_name, username, password, role, department, tl_id, cc_supervisor_id, allowed_departments, allowed_brands } = req.body;
       const hashedPassword = bcrypt.hashSync(password, 10);
       // QAs store departments + brands. TLs store brands only (their team
-      // scope already comes from agent.tl_id). Other roles stay NULL so the
-      // existing visibility rules (supervisor/agent) are untouched.
+      // scope already comes from agent.tl_id) + an optional cc_supervisor_id.
+      // Other roles stay NULL so the existing visibility rules
+      // (supervisor/agent) are untouched.
       const depsJson = role === 'qa' ? JSON.stringify(Array.isArray(allowed_departments) ? allowed_departments : []) : null;
       const brandsJson = (role === 'qa' || role === 'tl')
         ? JSON.stringify(Array.isArray(allowed_brands) ? allowed_brands : [])
         : null;
+      const ccSupId = role === 'tl' ? (cc_supervisor_id || null) : null;
       try {
         await db.prepare(
-          "INSERT INTO users (display_name, username, password, role, department, tl_id, allowed_departments, allowed_brands) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-        ).run(display_name, username, hashedPassword, role, department, tl_id || null, depsJson, brandsJson);
+          "INSERT INTO users (display_name, username, password, role, department, tl_id, cc_supervisor_id, allowed_departments, allowed_brands) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        ).run(display_name, username, hashedPassword, role, department, tl_id || null, ccSupId, depsJson, brandsJson);
         res.json({ success: true });
       } catch (e) {
         res.status(400).json({ error: "Username already exists" });
@@ -862,7 +868,7 @@ async function startServer() {
 
     app.put("/api/users/:id", async (req, res) => {
       try {
-        const { display_name, username, password, role, department, tl_id, allowed_departments, allowed_brands } = req.body;
+        const { display_name, username, password, role, department, tl_id, cc_supervisor_id, allowed_departments, allowed_brands } = req.body;
         const userId = req.params.id;
 
         const existing = await db.prepare("SELECT id FROM users WHERE id = ?").get(userId) as any;
@@ -872,22 +878,23 @@ async function startServer() {
         const brandsJson = (role === 'qa' || role === 'tl')
           ? JSON.stringify(Array.isArray(allowed_brands) ? allowed_brands : [])
           : null;
+        const ccSupId = role === 'tl' ? (cc_supervisor_id || null) : null;
 
         if (password && password.length > 0) {
           const hashedPassword = bcrypt.hashSync(password, 10);
           await db.prepare(`
             UPDATE users
             SET display_name = ?, username = ?, password = ?, role = ?, department = ?, tl_id = ?,
-                allowed_departments = ?, allowed_brands = ?
+                cc_supervisor_id = ?, allowed_departments = ?, allowed_brands = ?
             WHERE id = ?
-          `).run(display_name, username, hashedPassword, role, department, tl_id || null, depsJson, brandsJson, userId);
+          `).run(display_name, username, hashedPassword, role, department, tl_id || null, ccSupId, depsJson, brandsJson, userId);
         } else {
           await db.prepare(`
             UPDATE users
             SET display_name = ?, username = ?, role = ?, department = ?, tl_id = ?,
-                allowed_departments = ?, allowed_brands = ?
+                cc_supervisor_id = ?, allowed_departments = ?, allowed_brands = ?
             WHERE id = ?
-          `).run(display_name, username, role, department, tl_id || null, depsJson, brandsJson, userId);
+          `).run(display_name, username, role, department, tl_id || null, ccSupId, depsJson, brandsJson, userId);
         }
         res.json({ success: true });
       } catch (e: any) {

@@ -1,4 +1,4 @@
-export type UserRole = 'supervisor' | 'qa' | 'tl' | 'agent';
+export type UserRole = 'supervisor' | 'cc_supervisor' | 'qa' | 'tl' | 'agent';
 export type Department = 'Swish' | 'Mishmash' | 'FM' | 'Complain' | 'TEC';
 
 export interface User {
@@ -8,6 +8,8 @@ export interface User {
   role: UserRole;
   department: Department;
   tl_id?: number | null;
+  /** TL only: the Call-Center Supervisor this TL reports to. */
+  cc_supervisor_id?: number | null;
   status: 'active' | 'inactive';
   /** QA scope — list of department names this QA may view (deny-by-default if empty). */
   allowed_departments?: string[];

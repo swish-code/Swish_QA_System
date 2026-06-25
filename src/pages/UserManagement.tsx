@@ -12,6 +12,7 @@ type FormState = {
   role: UserRole;
   department: Department;
   tl_id: string;
+  cc_supervisor_id: string;
   allowed_departments: string[];
   allowed_brands: string[];
 };
@@ -23,6 +24,7 @@ const initialForm = (): FormState => ({
   role: 'agent',
   department: 'Swish',
   tl_id: '',
+  cc_supervisor_id: '',
   allowed_departments: [],
   allowed_brands: [],
 });
@@ -36,7 +38,7 @@ export default function UserManagement() {
   const [search, setSearch] = useState('');
   const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
 
-  const roles: UserRole[] = ['supervisor', 'qa', 'tl', 'agent'];
+  const roles: UserRole[] = ['supervisor', 'cc_supervisor', 'qa', 'tl', 'agent'];
   const departments: Department[] = ['Swish', 'Mishmash', 'FM', 'Complain', 'TEC'];
   const departmentOptions = departments.map(d => ({ value: d, label: d }));
 
@@ -81,6 +83,7 @@ export default function UserManagement() {
       role: u.role,
       department: u.department,
       tl_id: u.tl_id ? String(u.tl_id) : '',
+      cc_supervisor_id: (u as any).cc_supervisor_id ? String((u as any).cc_supervisor_id) : '',
       allowed_departments: u.allowed_departments || [],
       allowed_brands: u.allowed_brands || [],
     });
@@ -435,6 +438,23 @@ export default function UserManagement() {
                       <option value="">SELECT TEAM LEADER</option>
                       {users.filter(u => u.role === 'tl').map(tl => (
                         <option key={tl.id} value={tl.id}>{tl.display_name.toUpperCase()}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                {/* TL only: which Call-Center Supervisor manages this TL */}
+                {formData.role === 'tl' && (
+                  <div className="space-y-4">
+                    <label className="text-[10px] font-black text-zinc-400 dark:text-zinc-600 uppercase tracking-[0.3em] ml-1 flex items-center gap-2 italic">Reports To (CC Supervisor)</label>
+                    <select
+                      className="w-full bg-slate-50 dark:bg-zinc-900/50 border border-slate-200 dark:border-zinc-800 rounded-2xl px-6 py-5 text-sm font-black text-zinc-900 dark:text-white outline-none focus:border-indigo-600 appearance-none cursor-pointer shadow-inner italic"
+                      value={formData.cc_supervisor_id}
+                      onChange={(e) => setFormData({ ...formData, cc_supervisor_id: e.target.value })}
+                    >
+                      <option value="">UNASSIGNED</option>
+                      {users.filter(u => u.role === 'cc_supervisor').map(s => (
+                        <option key={s.id} value={s.id}>{s.display_name.toUpperCase()}</option>
                       ))}
                     </select>
                   </div>
