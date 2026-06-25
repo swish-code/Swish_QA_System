@@ -1160,28 +1160,19 @@ export default function EvaluationForm() {
             </h2>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6 lg:gap-8">
-           {[
-             { id: 'process', label: 'Process to Adherence' },
-             { id: 'problem_solving', label: 'Problem Solving & Accuracy' },
-             { id: 'empathy', label: 'Empathy & Soft Skills' },
-             { id: 'efficiency', label: 'Efficiency & Call Management' },
-           ].map(fb => (
-            <div key={fb.id} className="space-y-4">
-              <label className="text-[10px] font-black text-zinc-400 dark:text-zinc-600 uppercase tracking-widest block ml-2">{fb.label}</label>
-              <textarea 
-                className="w-full bg-white dark:bg-zinc-950/60 border border-zinc-100 dark:border-zinc-900 rounded-[1.5rem] p-5 text-xs text-zinc-800 dark:text-zinc-400 outline-none focus:border-indigo-500/20 dark:focus:border-emerald-500/20 h-24 resize-none placeholder:text-zinc-300 dark:placeholder:text-zinc-800 focus:bg-white dark:focus:bg-zinc-950"
-                placeholder={`Enter ${fb.label.toLowerCase()} feedback...`}
-                readOnly={isReadOnly}
-                value={(formData.feedback as any)[fb.id]}
-                onChange={(e) => setFormData({...formData, feedback: {...formData.feedback, [fb.id]: e.target.value}})}
-              />
-            </div>
-           ))}
-           <div className="md:col-span-2 space-y-4">
+        <div className="grid grid-cols-1 gap-4 sm:gap-6 lg:gap-8">
+           {/* The four categorised feedback boxes (Process / Problem Solving /
+               Empathy / Efficiency) were removed — the QA already captures
+               those signals via the failed-question toggles, so the text
+               boxes were redundant noise. Error Description is kept because
+               it's free-form context that doesn't map to any single question.
+               formData.feedback.{process,problem_solving,empathy,efficiency}
+               stays in the state object so historical evaluations keep
+               loading cleanly. */}
+           <div className="space-y-4">
               <label className="text-[10px] font-black text-zinc-400 dark:text-zinc-600 uppercase tracking-widest block ml-2">Error Description</label>
-              <textarea 
-                className="w-full bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-900 rounded-[1.5rem] p-5 text-xs text-zinc-800 dark:text-zinc-400 outline-none focus:border-rose-500/20 h-24 resize-none"
+              <textarea
+                className="w-full bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-900 rounded-[1.5rem] p-5 text-xs text-zinc-800 dark:text-zinc-400 outline-none focus:border-rose-500/20 h-32 resize-none"
                 placeholder="Enter detailed error description..."
                 readOnly={isReadOnly}
                 value={formData.feedback.error_description}
