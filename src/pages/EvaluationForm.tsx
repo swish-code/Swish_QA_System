@@ -1127,7 +1127,11 @@ export default function EvaluationForm() {
                   <button
                     key={err}
                     disabled={isReadOnly}
-                    onClick={() => setFormData({...formData, error_classification: err})}
+                    onClick={() => setFormData({
+                      ...formData,
+                      // Click the active option again to deselect it.
+                      error_classification: formData.error_classification === err ? '' : err,
+                    })}
                     className={`text-left px-5 py-3 rounded-2xl text-xs font-medium border transition-all ${
                       formData.error_classification === err
                         ? 'bg-zinc-100 dark:bg-zinc-900 border-indigo-500/40 text-zinc-900 dark:text-white shadow-sm'
