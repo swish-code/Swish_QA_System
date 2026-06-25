@@ -2110,6 +2110,18 @@ async function startServer() {
         const qaScope = await buildQAScopeClause(user_id, role, { e: 'e', agentJoin: 'a' });
         evalsQuery += qaScope.clause;
         params.push(...qaScope.params);
+
+        // Agents see only their own numbers on the LOB Performance Hub —
+        // the page lists every agent's evaluations by default, which leaks
+        // peers' scores to anyone with the link. Lock down both the
+        // evaluation list and the agent roster to just the caller.
+        if (role === 'agent') {
+          evalsQuery += " AND e.agent_id = ?";
+          params.push(user_id);
+          agentsQuery += " AND id = ?";
+          agentsParams.push(user_id);
+        }
+
         // Legacy TL fallback — no brand list configured = restrict to team.
         if (role === 'tl') {
           const tlBrands = await getTLBrandScope(user_id);
