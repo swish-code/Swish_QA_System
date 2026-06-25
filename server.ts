@@ -702,7 +702,17 @@ async function startServer() {
         }
 
         if (!parts.length) return { clause: '', params: [] };
-        return { clause: ` AND ${parts.join(' AND ')} `, params };
+
+        // SAFETY VALVE — a QA always sees evaluations they personally
+        // logged, regardless of how their brand/department scope is
+        // configured. Without this, a QA who picks a brand outside their
+        // own scope (because the frontend dropdown was forgiving) ends up
+        // creating a call they can't see. Wrap the scope filter in an OR
+        // against e.qa_id so the user's own work is always visible.
+        return {
+          clause: ` AND ((${parts.join(' AND ')}) OR ${aliases.e}.qa_id = ?) `,
+          params: [...params, userId],
+        };
       }
 
       if (role === 'tl') {
