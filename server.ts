@@ -2483,26 +2483,14 @@ async function startServer() {
           joinParams.push(effectiveEnd);
         }
 
-        // When the caller is a QA, only count evaluations that fall inside
-        // their assigned scope — same rules as everywhere else.
-        if (restrictToSelf) {
-          const scope = await getQAScope(user_id);
-          if (scope) {
-            // Explicit empty array on either dimension = deny everything.
-            if (scope.brands?.length === 0 || scope.departments?.length === 0) {
-              dateJoinConds.push("1=0");
-            } else {
-              if (scope.brands && scope.brands.length > 0) {
-                dateJoinConds.push(`e.brand IN (${scope.brands.map(() => '?').join(',')})`);
-                joinParams.push(...scope.brands);
-              }
-              if (scope.departments && scope.departments.length > 0) {
-                dateJoinConds.push(`EXISTS (SELECT 1 FROM users a2 WHERE a2.id = e.agent_id AND a2.department IN (${scope.departments.map(() => '?').join(',')}))`);
-                joinParams.push(...scope.departments);
-              }
-            }
-          }
-        }
+        // No brand/department scope filter here. This endpoint counts calls a
+        // QA personally logged (e.qa_id = u.id), so by definition every row
+        // is "their own work" — applying the cross-team scope filter on top
+        // would hide a QA's own throughput the moment they touched a brand
+        // outside their assigned list, which is exactly what reproduces as
+        // a "0 calls today" card on the dashboard for active QAs.
+        // Supervisors counting other QAs' throughput also don't want a
+        // scoped view here — they want raw productivity numbers.
 
         const userFilter = restrictToSelf ? "AND u.id = ?" : "";
         const userFilterParams = restrictToSelf ? [user_id] : [];
