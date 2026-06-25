@@ -647,10 +647,16 @@ async function startServer() {
      * and `aliases.agentJoin` is the joined users table alias (for QA's
      * department filter — TLs only need brand).
      *
-     * Scope policy:
-     *   - column NULL (legacy user)        → no filter, see everything role allows
-     *   - column [] (explicitly empty)     → "AND 1=0", deny everything
-     *   - column [...]                     → enforce the allow-list
+     * Scope policy (forgiving — empty or stale = unrestricted, NOT deny):
+     *   - column NULL (legacy user)              → no filter
+     *   - column [] (explicitly empty)           → no filter (matches the
+     *                                              frontend; explicit deny
+     *                                              should be done via role
+     *                                              change, not an empty arr)
+     *   - column [...] with no live overlap      → no filter (stale config,
+     *                                              e.g. brands renamed by
+     *                                              the canonical migration)
+     *   - column [...] with live overlap         → filter to the overlap
      *
      * Name kept as buildQAScopeClause for backwards-compat with the many
      * call sites that already use it — the body also handles TLs.
@@ -665,24 +671,36 @@ async function startServer() {
         if (!scope) return { clause: '', params: [] };
         const parts: string[] = [];
         const params: any[] = [];
-        // Brands
-        if (scope.brands === null) {
-          // legacy — unrestricted
-        } else if (scope.brands.length === 0) {
-          return { clause: ' AND 1=0 ', params: [] };
-        } else {
-          parts.push(`${aliases.e}.brand IN (${scope.brands.map(() => '?').join(',')})`);
-          params.push(...scope.brands);
+
+        // Brands — apply the filter only when the QA has a non-empty list
+        // AND at least one entry is a brand that actually exists in any
+        // evaluation. Otherwise treat as unrestricted (stale config).
+        if (scope.brands && scope.brands.length > 0) {
+          const liveBrands = await db.prepare(
+            "SELECT DISTINCT brand FROM evaluations WHERE brand IS NOT NULL"
+          ).all() as any[];
+          const liveSet = new Set(liveBrands.map((r: any) => r.brand));
+          const effective = scope.brands.filter(b => liveSet.has(b));
+          if (effective.length > 0) {
+            parts.push(`${aliases.e}.brand IN (${effective.map(() => '?').join(',')})`);
+            params.push(...effective);
+          }
         }
-        // Departments
-        if (scope.departments === null) {
-          // legacy — unrestricted
-        } else if (scope.departments.length === 0) {
-          return { clause: ' AND 1=0 ', params: [] };
-        } else {
-          parts.push(`${aliases.agentJoin}.department IN (${scope.departments.map(() => '?').join(',')})`);
-          params.push(...scope.departments);
+
+        // Departments — same logic: apply only when the QA has a list AND
+        // at least one entry is a department any agent actually belongs to.
+        if (scope.departments && scope.departments.length > 0) {
+          const liveDepts = await db.prepare(
+            "SELECT DISTINCT department FROM users WHERE role = 'agent' AND department IS NOT NULL"
+          ).all() as any[];
+          const liveSet = new Set(liveDepts.map((r: any) => r.department));
+          const effective = scope.departments.filter(d => liveSet.has(d));
+          if (effective.length > 0) {
+            parts.push(`${aliases.agentJoin}.department IN (${effective.map(() => '?').join(',')})`);
+            params.push(...effective);
+          }
         }
+
         if (!parts.length) return { clause: '', params: [] };
         return { clause: ` AND ${parts.join(' AND ')} `, params };
       }
@@ -691,9 +709,18 @@ async function startServer() {
         const brands = await getTLBrandScope(userId);
         if (brands === undefined) return { clause: '', params: [] }; // not a TL
         if (brands === null) return { clause: '', params: [] };       // legacy — unrestricted
-        if (brands.length === 0) return { clause: ' AND 1=0 ', params: [] }; // explicit deny
-        const brandPh = brands.map(() => '?').join(',');
-        return { clause: ` AND ${aliases.e}.brand IN (${brandPh}) `, params: [...brands] };
+        if (brands.length === 0) return { clause: '', params: [] };   // empty = unrestricted (was: deny)
+        // Apply only when at least one assigned brand still exists on a real
+        // evaluation. Otherwise the config is stale — treat as unrestricted
+        // so the TL isn't silently locked out after a brand rename.
+        const liveBrands = await db.prepare(
+          "SELECT DISTINCT brand FROM evaluations WHERE brand IS NOT NULL"
+        ).all() as any[];
+        const liveSet = new Set(liveBrands.map((r: any) => r.brand));
+        const effective = brands.filter(b => liveSet.has(b));
+        if (effective.length === 0) return { clause: '', params: [] };
+        const brandPh = effective.map(() => '?').join(',');
+        return { clause: ` AND ${aliases.e}.brand IN (${brandPh}) `, params: [...effective] };
       }
 
       return { clause: '', params: [] };
