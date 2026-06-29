@@ -358,20 +358,23 @@ export default function Analysis() {
             </select>
           </div>
 
-          {/* QA Auditor */}
-          <div className="flex flex-col gap-1.5">
-            <label className="text-[9px] font-black uppercase tracking-widest text-zinc-400">QA Auditor</label>
-            <select
-              className="bg-slate-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl px-4 py-3 text-xs font-black uppercase outline-none text-zinc-500 hover:text-indigo-600 shadow-sm cursor-pointer"
-              value={qaId}
-              onChange={(e) => setQaId(e.target.value)}
-            >
-              <option value="all">ALL AUDITORS</option>
-              {filterOptions.qas.map(qa => (
-                <option key={qa.id} value={qa.id.toString()}>{qa.display_name.toUpperCase()}</option>
-              ))}
-            </select>
-          </div>
+          {/* QA Auditor — hidden for cc_supervisor (operations role,
+              not quality calibration). Their view is by-agent only. */}
+          {user?.role !== 'cc_supervisor' && (
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[9px] font-black uppercase tracking-widest text-zinc-400">QA Auditor</label>
+              <select
+                className="bg-slate-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl px-4 py-3 text-xs font-black uppercase outline-none text-zinc-500 hover:text-indigo-600 shadow-sm cursor-pointer"
+                value={qaId}
+                onChange={(e) => setQaId(e.target.value)}
+              >
+                <option value="all">ALL AUDITORS</option>
+                {filterOptions.qas.map(qa => (
+                  <option key={qa.id} value={qa.id.toString()}>{qa.display_name.toUpperCase()}</option>
+                ))}
+              </select>
+            </div>
+          )}
 
           {/* Status */}
           <div className="flex flex-col gap-1.5 pt-4 sm:pt-0">
