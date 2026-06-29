@@ -4,8 +4,9 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import {
   Target, Phone, Clock, ListChecks, ShieldCheck, TrendingUp, Trophy, Settings,
-  Calendar, ArrowRight, AlertCircle, ChevronRight, Download
+  Calendar, ArrowRight, AlertCircle, ChevronRight, Download, BarChart3
 } from 'lucide-react';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import * as XLSX from 'xlsx';
 
 type SummaryRow = {
@@ -22,7 +23,15 @@ type Detail = {
   qa_id: number;
   month: string;
   config: any;
-  calls: { actual: number; target: number; attended_days?: number; per_day_target?: number; score: number; weight: number };
+  calls: {
+    actual: number;
+    target: number;
+    attended_days?: number;
+    per_day_target?: number;
+    daily?: { date: string; count: number }[];
+    score: number;
+    weight: number;
+  };
   duration: { actual_hours: number; target_hours: number; leave_days: number; score: number; weight: number };
   tasks: { total: number; on_time: number; overdue: number; sla_hours: number; score: number; weight: number };
   accuracy: { cases: number; deductions: number; score: number; weight: number };
@@ -471,6 +480,94 @@ function DetailPanel({ detail, qaName }: { detail: Detail; qaName: string }) {
           );
         })}
       </div>
+
+      {/* Daily call breakdown — chart + table of every day with ≥1 call
+          this month. Visible to QA viewing own KPI and supervisor
+          viewing any QA's KPI. */}
+      <DailyCallsBreakdown daily={detail.calls.daily || []} month={detail.month} />
+    </div>
+  );
+}
+
+function DailyCallsBreakdown({ daily, month }: { daily: { date: string; count: number }[]; month: string }) {
+  // Build a continuous day-by-day series for the whole month so empty
+  // days render as a 0 bar instead of being silently skipped.
+  const fullSeries = useMemo(() => {
+    const [yr, mo] = month.split('-').map(Number);
+    const lastDay = new Date(yr, mo, 0).getDate();
+    const map = new Map(daily.map(d => [d.date, d.count]));
+    const out: { date: string; day: string; count: number }[] = [];
+    for (let d = 1; d <= lastDay; d++) {
+      const isoDate = `${month}-${String(d).padStart(2, '0')}`;
+      out.push({
+        date: isoDate,
+        day: String(d),
+        count: map.get(isoDate) || 0,
+      });
+    }
+    return out;
+  }, [daily, month]);
+
+  const total = fullSeries.reduce((s, r) => s + r.count, 0);
+  const activeDays = fullSeries.filter(r => r.count > 0).length;
+  const peak = fullSeries.reduce((m, r) => Math.max(m, r.count), 0);
+  const peakDay = fullSeries.find(r => r.count === peak && peak > 0);
+
+  return (
+    <div className="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5 shadow-sm">
+      <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+        <div className="flex items-center gap-2">
+          <div className="p-1.5 rounded-lg bg-indigo-500/10 text-indigo-600 dark:text-indigo-400">
+            <BarChart3 size={14} />
+          </div>
+          <div>
+            <p className="text-[10px] font-black uppercase tracking-widest text-zinc-500">Calls per Day</p>
+            <p className="text-[9px] font-bold uppercase tracking-widest text-zinc-400 dark:text-zinc-600 mt-0.5">{month}</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-4 text-[10px] font-bold uppercase tracking-widest">
+          <span className="text-zinc-500">Total <b className="text-zinc-900 dark:text-white">{total}</b></span>
+          <span className="text-zinc-500">Active days <b className="text-zinc-900 dark:text-white">{activeDays}</b></span>
+          {peakDay && (
+            <span className="text-zinc-500">Peak <b className="text-emerald-600">{peak}</b> on {peakDay.date}</span>
+          )}
+        </div>
+      </div>
+
+      {total === 0 ? (
+        <div className="py-12 text-center text-[10px] font-black uppercase tracking-widest text-zinc-400 dark:text-zinc-600">
+          No calls logged in this month yet
+        </div>
+      ) : (
+        <>
+          <div className="h-48 w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={fullSeries}>
+                <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.05} vertical={false} />
+                <XAxis dataKey="day" stroke="#94a3b8" fontSize={10} tickLine={false} axisLine={false} />
+                <YAxis stroke="#94a3b8" fontSize={10} tickLine={false} axisLine={false} allowDecimals={false} />
+                <Tooltip
+                  contentStyle={{ backgroundColor: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: '12px' }}
+                  itemStyle={{ color: 'var(--app-fg)', fontSize: '12px' }}
+                  labelFormatter={(label) => `Day ${label}`}
+                  formatter={(value: any) => [`${value} calls`, 'Logged']}
+                />
+                <Bar dataKey="count" fill="#4f46e5" radius={[6, 6, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+
+          {/* Compact table of active days only */}
+          <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2">
+            {fullSeries.filter(r => r.count > 0).map(r => (
+              <div key={r.date} className="px-3 py-2 rounded-xl bg-zinc-50 dark:bg-zinc-900/50 border border-zinc-100 dark:border-zinc-800 flex items-center justify-between">
+                <span className="text-[10px] font-bold text-zinc-500 dark:text-zinc-400">{r.date.slice(5)}</span>
+                <span className="text-xs font-black text-indigo-600 dark:text-indigo-400">{r.count}</span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }

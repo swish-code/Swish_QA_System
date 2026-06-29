@@ -2904,6 +2904,17 @@ async function startServer() {
       ).get(qaId, monthStart, monthEnd) as any;
       const callsActual = Number(callsRow?.c || 0);
 
+      // Daily breakdown — one row per call-date in the month, with the
+      // count of evaluations the QA logged on that day. Returned in
+      // ascending order so the UI can plot it directly.
+      const dailyRows = await db.prepare(
+        `SELECT date, COUNT(*) AS c FROM evaluations
+         WHERE qa_id = ? AND date >= ? AND date <= ?
+         GROUP BY date
+         ORDER BY date ASC`
+      ).all(qaId, monthStart, monthEnd) as any[];
+      const dailyCalls = dailyRows.map(r => ({ date: r.date, count: Number(r.c) }));
+
       const attendedRow = await db.prepare(
         `SELECT COUNT(*) AS c FROM attendance_records
          WHERE user_id = ? AND date >= ? AND date <= ?
@@ -2998,6 +3009,7 @@ async function startServer() {
           target: effectiveCallsTarget,
           attended_days: attendedDays,
           per_day_target: perDayTarget,
+          daily: dailyCalls,
           score: Math.round(callsScore * 10) / 10,
           weight: cfg.weight_calls,
         },
