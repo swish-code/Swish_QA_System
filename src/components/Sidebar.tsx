@@ -17,7 +17,8 @@ import {
   Trophy,
   ShieldCheck,
   Sparkles,
-  Briefcase
+  Briefcase,
+  BookOpen
 } from 'lucide-react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
@@ -40,6 +41,7 @@ export default function Sidebar() {
 
   const links = [
     { name: 'Dashboard', icon: LayoutDashboard, path: '/', roles: ['supervisor', 'cc_supervisor', 'qa', 'tl', 'agent'] },
+    { name: 'Info', icon: BookOpen, path: '/info', roles: ['supervisor', 'cc_supervisor', 'qa', 'tl', 'agent'] },
     { name: 'New Evaluation', icon: Zap, path: '/evaluate', roles: ['qa'] },
     { name: 'All calls', icon: FileCheck, path: '/audits', roles: ['qa', 'supervisor', 'cc_supervisor', 'tl', 'agent'] },
     { name: 'Analysis Deck', icon: Activity, path: '/analysis', roles: ['qa', 'supervisor', 'cc_supervisor', 'tl', 'agent'] },
