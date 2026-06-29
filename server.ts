@@ -2887,7 +2887,9 @@ async function startServer() {
     // ---------- The aggregated KPI calculator ----------
     // Splits one month into the four metrics, each scored 0..100, then
     // blends them by the per-QA (or default) weights.
-    const computeQAKPI = async (qaId: number, month: string) => {
+    // includeDaily=false skips the per-day GROUP BY (used by the
+    // leaderboard summary where we only need scores).
+    const computeQAKPI = async (qaId: number, month: string, includeDaily: boolean = true) => {
       const monthStart = `${month}-01`;
       const [yr, mo] = month.split('-').map(Number);
       const lastDay = new Date(yr, mo, 0).getDate();
@@ -2905,15 +2907,18 @@ async function startServer() {
       const callsActual = Number(callsRow?.c || 0);
 
       // Daily breakdown — one row per call-date in the month, with the
-      // count of evaluations the QA logged on that day. Returned in
-      // ascending order so the UI can plot it directly.
-      const dailyRows = await db.prepare(
-        `SELECT date, COUNT(*) AS c FROM evaluations
-         WHERE qa_id = ? AND date >= ? AND date <= ?
-         GROUP BY date
-         ORDER BY date ASC`
-      ).all(qaId, monthStart, monthEnd) as any[];
-      const dailyCalls = dailyRows.map(r => ({ date: r.date, count: Number(r.c) }));
+      // count of evaluations the QA logged on that day. Skipped for the
+      // leaderboard summary endpoint where it's not used.
+      let dailyCalls: { date: string; count: number }[] = [];
+      if (includeDaily) {
+        const dailyRows = await db.prepare(
+          `SELECT date, COUNT(*) AS c FROM evaluations
+           WHERE qa_id = ? AND date >= ? AND date <= ?
+           GROUP BY date
+           ORDER BY date ASC`
+        ).all(qaId, monthStart, monthEnd) as any[];
+        dailyCalls = dailyRows.map(r => ({ date: r.date, count: Number(r.c) }));
+      }
 
       const attendedRow = await db.prepare(
         `SELECT COUNT(*) AS c FROM attendance_records
@@ -2955,25 +2960,30 @@ async function startServer() {
 
       // ----- Tasks (escalations handled within SLA) -----
       // Pair each "escalated" event with the next non-escalated QA action
-      // on the same evaluation. Delta vs SLA decides pass/fail.
+      // on the same evaluation in one query — previous N+1 ran one inner
+      // SELECT per escalation, which was the dominant cost of the KPI
+      // endpoint (10 QAs × 50 escalations = 500 round-trips).
       const slaSeconds = cfg.escalation_sla_hours * 3600;
       const escalations = await db.prepare(
-        `SELECT evaluation_id, created_at FROM escalation_logs
-         WHERE action = 'escalated' AND substr(CAST(created_at AS TEXT), 1, 10) >= ? AND substr(CAST(created_at AS TEXT), 1, 10) <= ?`
-      ).all(monthStart, monthEnd) as any[];
+        `SELECT el.evaluation_id, el.created_at AS escalated_at,
+                (SELECT MIN(el2.created_at) FROM escalation_logs el2
+                 WHERE el2.evaluation_id = el.evaluation_id
+                   AND el2.user_id = ?
+                   AND el2.action <> 'escalated'
+                   AND el2.created_at > el.created_at) AS responded_at
+         FROM escalation_logs el
+         WHERE el.action = 'escalated'
+           AND substr(CAST(el.created_at AS TEXT), 1, 10) >= ?
+           AND substr(CAST(el.created_at AS TEXT), 1, 10) <= ?`
+      ).all(qaId, monthStart, monthEnd) as any[];
 
       let tasksTotal = 0;
       let tasksOnTime = 0;
       let tasksOverdue = 0;
       for (const esc of escalations) {
-        const response = await db.prepare(
-          `SELECT created_at FROM escalation_logs
-           WHERE evaluation_id = ? AND user_id = ? AND action <> 'escalated' AND created_at > ?
-           ORDER BY created_at ASC LIMIT 1`
-        ).get(esc.evaluation_id, qaId, esc.created_at) as any;
-        if (!response) continue; // not assigned to this QA, or still pending
+        if (!esc.responded_at) continue; // not assigned to this QA, or still pending
         tasksTotal++;
-        const dt = (new Date(response.created_at).getTime() - new Date(esc.created_at).getTime()) / 1000;
+        const dt = (new Date(esc.responded_at).getTime() - new Date(esc.escalated_at).getTime()) / 1000;
         if (dt <= slaSeconds) tasksOnTime++; else tasksOverdue++;
       }
       const tasksScore = tasksTotal === 0 ? 100 : (tasksOnTime / tasksTotal) * 100;
@@ -3038,10 +3048,13 @@ async function startServer() {
       try {
         const month = (req.query.month as string) || new Date().toISOString().slice(0, 7);
         const qas = await db.prepare("SELECT id, display_name FROM users WHERE role = 'qa'").all() as any[];
-        const results = [];
-        for (const qa of qas) {
-          const r = await computeQAKPI(qa.id, month);
-          results.push({
+        // Promise.all parallelises the per-QA computations against the
+        // PG connection pool — was previously sequential and stacked up
+        // 10+ seconds of waterfall for ~10 QAs. includeDaily=false also
+        // skips the GROUP BY date query that the leaderboard doesn't use.
+        const results = await Promise.all(qas.map(async (qa: any) => {
+          const r = await computeQAKPI(qa.id, month, false);
+          return {
             qa_id: qa.id,
             qa_name: qa.display_name,
             calls_score: r.calls.score,
@@ -3049,8 +3062,8 @@ async function startServer() {
             tasks_score: r.tasks.score,
             accuracy_score: r.accuracy.score,
             total_score: r.total_score,
-          });
-        }
+          };
+        }));
         results.sort((a, b) => b.total_score - a.total_score);
         res.json({ month, qas: results });
       } catch (e: any) {
