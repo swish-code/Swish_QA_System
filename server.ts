@@ -186,6 +186,25 @@ async function startServer() {
     // SQLite compat; default 0 leaves every existing call untouched.
     try { await db.exec("ALTER TABLE evaluations ADD COLUMN IF NOT EXISTS is_wow INTEGER DEFAULT 0"); } catch(e) {}
 
+    // Attendance — manual Check-In / Check-Out by QAs. Drives the
+    // dynamic calls target (35 × attended days) in the QA KPI engine.
+    //   date         YYYY-MM-DD, lets us group by day cheaply
+    //   check_in_at  set on first /check-in of the day
+    //   check_out_at NULL while the QA is on shift, set on /check-out
+    // A day with BOTH timestamps populated counts as "attended".
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS attendance_records (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        date TEXT NOT NULL,
+        check_in_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        check_out_at TIMESTAMP,
+        UNIQUE (user_id, date)
+      );
+    `);
+    // Per-day calls target for the attendance-driven KPI.
+    try { await db.exec("ALTER TABLE qa_kpi_config ADD COLUMN IF NOT EXISTS calls_per_attended_day INTEGER DEFAULT 35"); } catch(e) {}
+
     // -----------------------------------------------------------------
     // QA KPI infrastructure — four metrics aggregated into a monthly
     // score per QA: Calls (40%) + Duration (10%) + Tasks (20%) +
@@ -783,6 +802,97 @@ async function startServer() {
           allowed_brands: parseJsonArray(user.allowed_brands),
         }
       });
+    });
+
+    // -----------------------------------------------------------------
+    // Attendance — Check-In / Check-Out, drives the dynamic QA Calls
+    // target (35 × attended days). QAs and supervisors use this; other
+    // roles never reach the endpoints because the UI hides the widget.
+    // -----------------------------------------------------------------
+    const todayStr = () => new Date().toISOString().split('T')[0];
+
+    // Get today's attendance row for a user (or null).
+    app.get("/api/attendance/today", async (req, res) => {
+      try {
+        const { user_id } = req.query;
+        if (!user_id) return res.status(400).json({ error: "user_id is required" });
+        const row = await db.prepare(
+          "SELECT id, user_id, date, check_in_at, check_out_at FROM attendance_records WHERE user_id = ? AND date = ?"
+        ).get(user_id, todayStr());
+        res.json(row || null);
+      } catch (e: any) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    app.post("/api/attendance/check-in", async (req, res) => {
+      try {
+        const { user_id } = req.body;
+        if (!user_id) return res.status(400).json({ error: "user_id required" });
+        const date = todayStr();
+        // Idempotent — re-check-in on the same day is a no-op (we already
+        // have an open row). UNIQUE constraint catches concurrent inserts.
+        const existing = await db.prepare(
+          "SELECT id, check_in_at, check_out_at FROM attendance_records WHERE user_id = ? AND date = ?"
+        ).get(user_id, date) as any;
+        if (existing) {
+          // If a previous Check-Out exists today, clearing it would mess
+          // with the "attended days" count. Treat double-check-in as a
+          // silent success unless the row was checked out (in which case
+          // we just keep the original times — no shift-back-in flow yet).
+          return res.json({ success: true, id: existing.id, already: true });
+        }
+        const result = await db.prepare(
+          "INSERT INTO attendance_records (user_id, date, check_in_at) VALUES (?, ?, CURRENT_TIMESTAMP)"
+        ).run(user_id, date);
+        res.json({ success: true, id: result.lastInsertRowid });
+      } catch (e: any) {
+        console.error('check-in failed:', e);
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    app.post("/api/attendance/check-out", async (req, res) => {
+      try {
+        const { user_id } = req.body;
+        if (!user_id) return res.status(400).json({ error: "user_id required" });
+        const date = todayStr();
+        const existing = await db.prepare(
+          "SELECT id, check_in_at, check_out_at FROM attendance_records WHERE user_id = ? AND date = ?"
+        ).get(user_id, date) as any;
+        if (!existing) {
+          return res.status(400).json({ error: "Check in first before checking out." });
+        }
+        await db.prepare(
+          "UPDATE attendance_records SET check_out_at = CURRENT_TIMESTAMP WHERE id = ?"
+        ).run(existing.id);
+        res.json({ success: true });
+      } catch (e: any) {
+        console.error('check-out failed:', e);
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    // Count "attended days" — rows in [from, to] where BOTH timestamps
+    // are populated. Used by the QA KPI engine and the dashboard widget.
+    app.get("/api/attendance/days", async (req, res) => {
+      try {
+        const { user_id, from_date, to_date } = req.query;
+        if (!user_id) return res.status(400).json({ error: "user_id required" });
+        const today = new Date();
+        const monthStart = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-01`;
+        const monthEnd = todayStr();
+        const fromD = (from_date as string) || monthStart;
+        const toD = (to_date as string) || monthEnd;
+        const row = await db.prepare(
+          `SELECT COUNT(*) AS c FROM attendance_records
+           WHERE user_id = ? AND date >= ? AND date <= ?
+             AND check_in_at IS NOT NULL AND check_out_at IS NOT NULL`
+        ).get(user_id, fromD, toD) as any;
+        res.json({ from_date: fromD, to_date: toD, attended_days: Number(row?.c || 0) });
+      } catch (e: any) {
+        res.status(500).json({ error: e.message });
+      }
     });
 
     // Session heartbeat — keeps logout_at / last_seen_at fresh while
@@ -2785,11 +2895,25 @@ async function startServer() {
       const cfg = await loadKPIConfig(qaId);
 
       // ----- Calls -----
+      // Target is now attendance-driven: 35 (config.calls_per_attended_day)
+      // per day the QA actually checked in AND out. If they have no
+      // attendance records in this month yet, fall back to the static
+      // monthly target so legacy QAs don't get a 0 target.
       const callsRow = await db.prepare(
         `SELECT COUNT(*) AS c FROM evaluations WHERE qa_id = ? AND date >= ? AND date <= ?`
       ).get(qaId, monthStart, monthEnd) as any;
       const callsActual = Number(callsRow?.c || 0);
-      const callsScore = Math.min(100, (callsActual / Math.max(1, cfg.calls_target)) * 100);
+
+      const attendedRow = await db.prepare(
+        `SELECT COUNT(*) AS c FROM attendance_records
+         WHERE user_id = ? AND date >= ? AND date <= ?
+           AND check_in_at IS NOT NULL AND check_out_at IS NOT NULL`
+      ).get(qaId, monthStart, monthEnd) as any;
+      const attendedDays = Number(attendedRow?.c || 0);
+      const perDayTarget = Number(cfg.calls_per_attended_day) || 35;
+      const dynamicTarget = attendedDays * perDayTarget;
+      const effectiveCallsTarget = attendedDays > 0 ? dynamicTarget : cfg.calls_target;
+      const callsScore = Math.min(100, (callsActual / Math.max(1, effectiveCallsTarget)) * 100);
 
       // ----- Duration -----
       // Sum (last_seen_at - login_at) for all sessions in the month.
@@ -2869,7 +2993,14 @@ async function startServer() {
         qa_id: qaId,
         month,
         config: cfg,
-        calls: { actual: callsActual, target: cfg.calls_target, score: Math.round(callsScore * 10) / 10, weight: cfg.weight_calls },
+        calls: {
+          actual: callsActual,
+          target: effectiveCallsTarget,
+          attended_days: attendedDays,
+          per_day_target: perDayTarget,
+          score: Math.round(callsScore * 10) / 10,
+          weight: cfg.weight_calls,
+        },
         duration: { actual_hours: Math.round(actualHours * 10) / 10, target_hours: targetHours, leave_days: leaveDays, score: Math.round(durationScore * 10) / 10, weight: cfg.weight_duration },
         tasks: { total: tasksTotal, on_time: tasksOnTime, overdue: tasksOverdue, sla_hours: cfg.escalation_sla_hours, score: Math.round(tasksScore * 10) / 10, weight: cfg.weight_tasks },
         accuracy: { cases: openCases.length, deductions: Math.round(deductions * 10) / 10, score: Math.round(accuracyScore * 10) / 10, weight: cfg.weight_accuracy },

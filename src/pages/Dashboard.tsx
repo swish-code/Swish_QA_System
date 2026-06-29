@@ -3,6 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import { NavLink, useNavigate } from 'react-router-dom';
 import StatCard from '../components/StatCard';
 import QACallsCard from '../components/QACallsCard';
+import AttendanceWidget from '../components/AttendanceWidget';
 import { motion } from 'motion/react';
 import { 
   TrendingUp, 
@@ -101,6 +102,9 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+
+      {/* Attendance widget — QA-only Check-In/Check-Out card */}
+      <AttendanceWidget />
 
       {/* Stats Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">

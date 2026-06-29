@@ -22,7 +22,7 @@ type Detail = {
   qa_id: number;
   month: string;
   config: any;
-  calls: { actual: number; target: number; score: number; weight: number };
+  calls: { actual: number; target: number; attended_days?: number; per_day_target?: number; score: number; weight: number };
   duration: { actual_hours: number; target_hours: number; leave_days: number; score: number; weight: number };
   tasks: { total: number; on_time: number; overdue: number; sla_hours: number; score: number; weight: number };
   accuracy: { cases: number; deductions: number; score: number; weight: number };
@@ -364,10 +364,20 @@ function DetailPanel({ detail, qaName }: { detail: Detail; qaName: string }) {
       icon: Phone,
       score: detail.calls.score,
       weight: detail.calls.weight,
-      lines: [
-        ['Logged', `${detail.calls.actual}`],
-        ['Target', `${detail.calls.target}`],
-      ],
+      // Target is attendance-driven (35 × attended_days). When the QA
+      // has at least one attended day in the month, show the breakdown
+      // so they understand where the number came from.
+      lines: (detail.calls.attended_days && detail.calls.attended_days > 0)
+        ? [
+            ['Logged', `${detail.calls.actual}`],
+            ['Target', `${detail.calls.target}`],
+            ['Attended days', `${detail.calls.attended_days}`],
+            ['Per day', `${detail.calls.per_day_target ?? 35}`],
+          ]
+        : [
+            ['Logged', `${detail.calls.actual}`],
+            ['Target', `${detail.calls.target}`],
+          ],
     },
     {
       key: 'duration',
