@@ -1234,6 +1234,39 @@ async function startServer() {
           SET final_score = ?, critical_failure = ?, data = ?, status = ?
           WHERE id = ?
         `).run(newData.final_score, newData.critical_failure ? 1 : 0, JSON.stringify(newData.data), newStatus, evaluation_id);
+
+        // Auto-open an Accuracy Case whenever the post-escalation score
+        // is different from the original. The TL who escalated this
+        // evaluation is recorded as the case's tl_id; the QA whose
+        // call was reworked is the qa_id. Supervisors can later adjust
+        // qa_share / status from the Accuracy Cases page.
+        try {
+          const oldScore = Number(evaluation.final_score);
+          const newScore = Number(newData.final_score);
+          if (Number.isFinite(oldScore) && Number.isFinite(newScore) && oldScore !== newScore) {
+            const lastEscalation = await db.prepare(
+              `SELECT user_id FROM escalation_logs
+               WHERE evaluation_id = ? AND action = 'escalated'
+               ORDER BY id DESC LIMIT 1`
+            ).get(evaluation_id) as any;
+            const tlId = lastEscalation?.user_id || null;
+            const delta = newScore - oldScore;
+            const direction = delta > 0 ? '+' : '';
+            // Severity heuristic: bigger swings = more severe.
+            const absDelta = Math.abs(delta);
+            const severity = absDelta >= 15 ? 'high' : absDelta >= 7 ? 'medium' : 'low';
+            const title = `Score changed after escalation (${oldScore}% → ${newScore}%, ${direction}${delta.toFixed(1)})`;
+            const description = `Original score ${oldScore}%, adjusted to ${newScore}% after QA review of TL escalation. QA comment: ${comment || '(none)'}`;
+            if (tlId) {
+              await db.prepare(
+                `INSERT INTO accuracy_cases (qa_id, tl_id, evaluation_id, title, description, severity, qa_share, status)
+                 VALUES (?, ?, ?, ?, ?, ?, 1.0, 'open')`
+              ).run(evaluation.qa_id, tlId, evaluation_id, title, description, severity);
+            }
+          }
+        } catch (err) {
+          console.error('Auto-create accuracy_case failed:', err);
+        }
       } else {
         await db.prepare("UPDATE evaluations SET status = ? WHERE id = ?").run(newStatus, evaluation_id);
       }
