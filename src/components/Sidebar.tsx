@@ -54,7 +54,7 @@ export default function Sidebar() {
     { name: 'TL KPIs', icon: Trophy, path: '/tl-kpis', roles: ['cc_supervisor', 'supervisor'] },
     { name: 'Accuracy Cases', icon: ShieldCheck, path: '/accuracy-cases', roles: ['qa', 'tl', 'supervisor', 'cc_supervisor'] },
     { name: 'User Management', icon: Users, path: '/users', roles: ['supervisor'] },
-    { name: 'Activity Audit', icon: History, path: '/activity-audit', roles: ['supervisor', 'qa', 'tl'] },
+    { name: 'Activity Audit', icon: History, path: '/activity-audit', roles: ['supervisor'] },
     { name: 'Form Settings', icon: Settings, path: '/settings/form', roles: ['supervisor'] },
   ];
 
