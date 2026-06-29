@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import {
   Target, Phone, Clock, ListChecks, ShieldCheck, TrendingUp, Trophy, Settings,
-  Calendar, ArrowRight, AlertCircle, ChevronRight, Download, BarChart3
+  Calendar, ArrowRight, AlertCircle, ChevronRight, Download, BarChart3, Edit2
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import * as XLSX from 'xlsx';
@@ -28,7 +28,7 @@ type Detail = {
     target: number;
     attended_days?: number;
     per_day_target?: number;
-    daily?: { date: string; count: number }[];
+    daily?: { date: string; count: number; overridden?: boolean; actual?: number }[];
     score: number;
     weight: number;
   };
@@ -352,7 +352,7 @@ export default function QAKPIs() {
 
       {/* Detail panel */}
       {detail ? (
-        <DetailPanel detail={detail} qaName={targetQAName || ''} />
+        <DetailPanel detail={detail} qaName={targetQAName || ''} onUpdated={fetchDetail} />
       ) : !isSupervisor && !loading ? (
         <div className="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-12 text-center">
           <AlertCircle className="mx-auto text-zinc-300 mb-3" size={32} />
@@ -365,7 +365,7 @@ export default function QAKPIs() {
   );
 }
 
-function DetailPanel({ detail, qaName }: { detail: Detail; qaName: string }) {
+function DetailPanel({ detail, qaName, onUpdated }: { detail: Detail; qaName: string; onUpdated?: () => void }) {
   const cards = [
     {
       key: 'calls',
@@ -483,26 +483,77 @@ function DetailPanel({ detail, qaName }: { detail: Detail; qaName: string }) {
 
       {/* Daily call breakdown — chart + table of every day with ≥1 call
           this month. Visible to QA viewing own KPI and supervisor
-          viewing any QA's KPI. */}
-      <DailyCallsBreakdown daily={detail.calls.daily || []} month={detail.month} />
+          viewing any QA's KPI. Admin (supervisor) can edit per-day
+          counts; the change feeds back into the score. */}
+      <DailyCallsBreakdown
+        daily={detail.calls.daily || []}
+        month={detail.month}
+        qaId={detail.qa_id}
+        onUpdated={onUpdated}
+      />
     </div>
   );
 }
 
-function DailyCallsBreakdown({ daily, month }: { daily: { date: string; count: number }[]; month: string }) {
+function DailyCallsBreakdown({ daily, month, qaId, onUpdated }: {
+  daily: { date: string; count: number; overridden?: boolean; actual?: number }[];
+  month: string;
+  qaId: number;
+  onUpdated?: () => void;
+}) {
+  const { user } = useAuth();
+  const canEdit = user?.role === 'supervisor';
+  const [editingDate, setEditingDate] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState<string>('');
+  const [editingActual, setEditingActual] = useState<number>(0);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const openEdit = (date: string, currentCount: number, actual: number) => {
+    setEditingDate(date);
+    setEditValue(String(currentCount));
+    setEditingActual(actual);
+    setErr(null);
+  };
+  const closeEdit = () => {
+    setEditingDate(null);
+    setEditValue('');
+    setErr(null);
+  };
+
+  const submitEdit = async (clear = false) => {
+    if (!editingDate) return;
+    setBusy(true); setErr(null);
+    try {
+      const body: any = { date: editingDate, set_by_user_id: user?.id };
+      body.count = clear ? null : parseInt(editValue, 10);
+      const res = await fetch(`/api/kpi/qa/${qaId}/day-override`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error((await res.json()).error || 'Save failed');
+      closeEdit();
+      onUpdated?.();
+    } catch (e: any) { setErr(e.message); }
+    finally { setBusy(false); }
+  };
   // Build a continuous day-by-day series for the whole month so empty
   // days render as a 0 bar instead of being silently skipped.
   const fullSeries = useMemo(() => {
     const [yr, mo] = month.split('-').map(Number);
     const lastDay = new Date(yr, mo, 0).getDate();
-    const map = new Map(daily.map(d => [d.date, d.count]));
-    const out: { date: string; day: string; count: number }[] = [];
+    const byDate = new Map(daily.map(d => [d.date, d]));
+    const out: { date: string; day: string; count: number; overridden: boolean; actual: number }[] = [];
     for (let d = 1; d <= lastDay; d++) {
       const isoDate = `${month}-${String(d).padStart(2, '0')}`;
+      const row = byDate.get(isoDate);
       out.push({
         date: isoDate,
         day: String(d),
-        count: map.get(isoDate) || 0,
+        count: row?.count || 0,
+        overridden: !!row?.overridden,
+        actual: row?.actual ?? row?.count ?? 0,
       });
     }
     return out;
@@ -557,15 +608,79 @@ function DailyCallsBreakdown({ daily, month }: { daily: { date: string; count: n
             </ResponsiveContainer>
           </div>
 
-          {/* Compact table of active days only */}
+          {/* Compact table of active + admin-edited days. Admin clicks
+              to inline-edit a day's count; everyone sees the result. */}
           <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2">
-            {fullSeries.filter(r => r.count > 0).map(r => (
-              <div key={r.date} className="px-3 py-2 rounded-xl bg-zinc-50 dark:bg-zinc-900/50 border border-zinc-100 dark:border-zinc-800 flex items-center justify-between">
-                <span className="text-[10px] font-bold text-zinc-500 dark:text-zinc-400">{r.date.slice(5)}</span>
-                <span className="text-xs font-black text-indigo-600 dark:text-indigo-400">{r.count}</span>
+            {fullSeries.filter(r => r.count > 0 || r.overridden).map(r => (
+              <div
+                key={r.date}
+                className={`px-3 py-2 rounded-xl border flex items-center justify-between ${
+                  r.overridden
+                    ? 'bg-amber-500/10 border-amber-500/30'
+                    : 'bg-zinc-50 dark:bg-zinc-900/50 border-zinc-100 dark:border-zinc-800'
+                }`}
+                title={r.overridden ? `Admin override · actual was ${r.actual}` : undefined}
+              >
+                <div className="flex flex-col">
+                  <span className="text-[10px] font-bold text-zinc-500 dark:text-zinc-400">{r.date.slice(5)}</span>
+                  {r.overridden && (
+                    <span className="text-[8px] font-black uppercase tracking-widest text-amber-600 dark:text-amber-400">edited</span>
+                  )}
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className={`text-xs font-black ${r.overridden ? 'text-amber-600 dark:text-amber-400' : 'text-indigo-600 dark:text-indigo-400'}`}>{r.count}</span>
+                  {canEdit && (
+                    <button
+                      type="button"
+                      onClick={() => openEdit(r.date, r.count, r.actual)}
+                      className="p-1 rounded-md text-zinc-400 hover:text-indigo-500 hover:bg-white dark:hover:bg-zinc-800 transition-colors"
+                      title="Edit count for this day"
+                    >
+                      <Edit2 size={10} />
+                    </button>
+                  )}
+                </div>
               </div>
             ))}
           </div>
+
+          {canEdit && (
+            <p className="mt-3 text-[10px] text-zinc-400 dark:text-zinc-600">
+              ⓘ As Admin, you can click <Edit2 size={9} className="inline mx-0.5" /> on any day to override the call count. The QA's score updates immediately.
+            </p>
+          )}
+
+          {/* Inline edit modal (admin only) */}
+          {editingDate && (
+            <div className="fixed inset-0 z-[110] bg-black/70 backdrop-blur-md flex items-center justify-center p-4" onClick={closeEdit}>
+              <div onClick={(e) => e.stopPropagation()} className="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5 w-full max-w-sm shadow-2xl">
+                <p className="text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-1">Edit Calls Count</p>
+                <p className="text-base font-black text-zinc-900 dark:text-white mb-1">{editingDate}</p>
+                <p className="text-[10px] text-zinc-400 mb-4">Actual logged: {editingActual}</p>
+                <input
+                  type="number"
+                  min={0}
+                  step={1}
+                  value={editValue}
+                  onChange={(e) => setEditValue(e.target.value)}
+                  className="w-full bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl px-3 py-2 text-sm font-bold text-zinc-800 dark:text-zinc-100 outline-none focus:border-indigo-500"
+                  autoFocus
+                />
+                {err && <p className="text-[10px] text-rose-500 mt-2">{err}</p>}
+                <div className="flex gap-2 mt-4">
+                  <button onClick={closeEdit} disabled={busy}
+                    className="flex-1 px-3 py-2 rounded-xl bg-zinc-100 dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300 text-[10px] font-black uppercase tracking-widest">Cancel</button>
+                  <button onClick={() => submitEdit(true)} disabled={busy}
+                    className="px-3 py-2 rounded-xl bg-rose-100 dark:bg-rose-950/30 text-rose-600 text-[10px] font-black uppercase tracking-widest hover:bg-rose-200 disabled:opacity-50"
+                    title="Revert to the actual evaluation count">Reset</button>
+                  <button onClick={() => submitEdit(false)} disabled={busy}
+                    className="flex-1 px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-black uppercase tracking-widest disabled:opacity-50">
+                    {busy ? 'Saving…' : 'Save'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </>
       )}
     </div>

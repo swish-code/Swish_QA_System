@@ -186,6 +186,22 @@ async function startServer() {
     // SQLite compat; default 0 leaves every existing call untouched.
     try { await db.exec("ALTER TABLE evaluations ADD COLUMN IF NOT EXISTS is_wow INTEGER DEFAULT 0"); } catch(e) {}
 
+    // Admin manual override of a QA's calls count for a specific day.
+    // Used by the Admin Supervisor to correct a day's number from the
+    // QA KPIs detail page; flows through to the total and the score.
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS qa_kpi_day_overrides (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        qa_id INTEGER NOT NULL,
+        date TEXT NOT NULL,
+        override_count INTEGER NOT NULL,
+        note TEXT,
+        set_by_user_id INTEGER,
+        set_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (qa_id, date)
+      );
+    `);
+
     // Attendance — manual Check-In / Check-Out by QAs. Drives the
     // dynamic calls target (35 × attended days) in the QA KPI engine.
     //   date         YYYY-MM-DD, lets us group by day cheaply
@@ -2901,23 +2917,47 @@ async function startServer() {
       // per day the QA actually checked in AND out. If they have no
       // attendance records in this month yet, fall back to the static
       // monthly target so legacy QAs don't get a 0 target.
-      const callsRow = await db.prepare(
-        `SELECT COUNT(*) AS c FROM evaluations WHERE qa_id = ? AND date >= ? AND date <= ?`
-      ).get(qaId, monthStart, monthEnd) as any;
-      const callsActual = Number(callsRow?.c || 0);
+      //
+      // The Admin Supervisor can override a specific day's count from
+      // the KPI page (qa_kpi_day_overrides table). Pull the overrides
+      // for the month once and use them both for the daily array and
+      // for the rolled-up callsActual so the score reflects the edits.
+      const overrideRows = await db.prepare(
+        `SELECT date, override_count FROM qa_kpi_day_overrides
+         WHERE qa_id = ? AND date >= ? AND date <= ?`
+      ).all(qaId, monthStart, monthEnd) as any[];
+      const overrideMap = new Map<string, number>(
+        overrideRows.map(r => [r.date, Number(r.override_count)])
+      );
 
-      // Daily breakdown — one row per call-date in the month, with the
-      // count of evaluations the QA logged on that day. Skipped for the
-      // leaderboard summary endpoint where it's not used.
-      let dailyCalls: { date: string; count: number }[] = [];
-      if (includeDaily) {
-        const dailyRows = await db.prepare(
-          `SELECT date, COUNT(*) AS c FROM evaluations
-           WHERE qa_id = ? AND date >= ? AND date <= ?
-           GROUP BY date
-           ORDER BY date ASC`
-        ).all(qaId, monthStart, monthEnd) as any[];
-        dailyCalls = dailyRows.map(r => ({ date: r.date, count: Number(r.c) }));
+      // Always need the per-day actual counts now — they're the base
+      // for both the leaderboard total and the chart. Cheap query.
+      const dailyRows = await db.prepare(
+        `SELECT date, COUNT(*) AS c FROM evaluations
+         WHERE qa_id = ? AND date >= ? AND date <= ?
+         GROUP BY date
+         ORDER BY date ASC`
+      ).all(qaId, monthStart, monthEnd) as any[];
+      const actualMap = new Map<string, number>(
+        dailyRows.map((r: any) => [r.date, Number(r.c)])
+      );
+
+      // Effective per-day = override (if any) else actual. Total
+      // includes every date that has either an actual count or an
+      // override (an override of 0 on a day with no calls would still
+      // be considered "set" but contributes 0 — harmless).
+      const allDates = new Set<string>([...actualMap.keys(), ...overrideMap.keys()]);
+      let callsActual = 0;
+      const dailyCalls: { date: string; count: number; overridden?: boolean; actual?: number }[] = [];
+      const sortedDates = Array.from(allDates).sort();
+      for (const date of sortedDates) {
+        const actual = actualMap.get(date) || 0;
+        const overridden = overrideMap.has(date);
+        const count = overridden ? (overrideMap.get(date) || 0) : actual;
+        callsActual += count;
+        if (includeDaily) {
+          dailyCalls.push({ date, count, overridden, actual });
+        }
       }
 
       const attendedRow = await db.prepare(
@@ -3039,6 +3079,45 @@ async function startServer() {
         res.json(result);
       } catch (e: any) {
         console.error('KPI compute failed:', e);
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    // Admin Supervisor override for a single (QA, date). Upserts the
+    // row, recomputes the score downstream. Pass count: null to clear
+    // the override and revert to the actual evaluation count.
+    app.put("/api/kpi/qa/:user_id/day-override", async (req, res) => {
+      try {
+        const qaId = parseInt(req.params.user_id, 10);
+        const { date, count, note, set_by_user_id } = req.body;
+        if (!date) return res.status(400).json({ error: "date required" });
+
+        if (count === null || count === undefined || count === '') {
+          await db.prepare("DELETE FROM qa_kpi_day_overrides WHERE qa_id = ? AND date = ?")
+            .run(qaId, date);
+          return res.json({ success: true, cleared: true });
+        }
+        const c = parseInt(String(count), 10);
+        if (!Number.isFinite(c) || c < 0) {
+          return res.status(400).json({ error: "count must be a non-negative integer" });
+        }
+
+        // Upsert — try update first, then insert.
+        const existing = await db.prepare(
+          "SELECT id FROM qa_kpi_day_overrides WHERE qa_id = ? AND date = ?"
+        ).get(qaId, date) as any;
+        if (existing) {
+          await db.prepare(
+            "UPDATE qa_kpi_day_overrides SET override_count = ?, note = ?, set_by_user_id = ?, set_at = CURRENT_TIMESTAMP WHERE id = ?"
+          ).run(c, note || null, set_by_user_id || null, existing.id);
+        } else {
+          await db.prepare(
+            "INSERT INTO qa_kpi_day_overrides (qa_id, date, override_count, note, set_by_user_id) VALUES (?, ?, ?, ?, ?)"
+          ).run(qaId, date, c, note || null, set_by_user_id || null);
+        }
+        res.json({ success: true });
+      } catch (e: any) {
+        console.error('day-override failed:', e);
         res.status(500).json({ error: e.message });
       }
     });
