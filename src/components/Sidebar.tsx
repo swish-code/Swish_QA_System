@@ -51,7 +51,7 @@ export default function Sidebar() {
     { name: 'Drop Point', icon: BarChart3, path: '/drop-point', roles: ['qa', 'supervisor', 'cc_supervisor', 'tl'] },
     { name: 'WOW Calls', icon: Sparkles, path: '/wow-calls', roles: ['qa', 'supervisor', 'cc_supervisor', 'tl'] },
     { name: 'QA KPIs', icon: Trophy, path: '/qa-kpis', roles: ['qa', 'supervisor'] },
-    { name: 'TL KPIs', icon: Trophy, path: '/tl-kpis', roles: ['cc_supervisor', 'supervisor'] },
+    { name: 'TL KPIs', icon: Trophy, path: '/tl-kpis', roles: ['cc_supervisor'] },
     { name: 'Accuracy Cases', icon: ShieldCheck, path: '/accuracy-cases', roles: ['qa', 'tl', 'supervisor'] },
     { name: 'User Management', icon: Users, path: '/users', roles: ['supervisor'] },
     { name: 'Activity Audit', icon: History, path: '/activity-audit', roles: ['supervisor'] },
