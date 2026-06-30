@@ -198,6 +198,23 @@ async function startServer() {
     try { await db.exec("ALTER TABLE evaluations ADD COLUMN IF NOT EXISTS agent_escalation_response TEXT"); } catch(e) {}
     try { await db.exec("ALTER TABLE evaluations ADD COLUMN IF NOT EXISTS agent_escalation_at TIMESTAMP"); } catch(e) {}
 
+    // QA edit trail — a QA can edit an existing call; every save records who
+    // changed what and when, so a supervisor can audit it. The two columns on
+    // `evaluations` give a cheap "was this row ever edited?" flag (drives the
+    // blue row highlight) and point at the most recent editor.
+    try { await db.exec("ALTER TABLE evaluations ADD COLUMN IF NOT EXISTS last_edited_at TIMESTAMP"); } catch(e) {}
+    try { await db.exec("ALTER TABLE evaluations ADD COLUMN IF NOT EXISTS last_edited_by INTEGER"); } catch(e) {}
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS evaluation_edits (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        evaluation_id INTEGER NOT NULL,
+        editor_id INTEGER,
+        editor_name TEXT,
+        changes JSON,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
     // Admin manual override of a QA's calls count for a specific day.
     // Used by the Admin Supervisor to correct a day's number from the
     // QA KPIs detail page; flows through to the total and the score.
@@ -1510,6 +1527,7 @@ async function startServer() {
         FROM evaluations e
         JOIN users a ON e.agent_id = a.id
         JOIN users q ON e.qa_id = q.id
+        LEFT JOIN users le ON e.last_edited_by = le.id
         WHERE 1=1
       `;
       let params: any[] = [];
@@ -1596,7 +1614,8 @@ async function startServer() {
 
       // Get paginated data
       const query = `
-        SELECT e.*, a.display_name as agent_name, q.display_name as qa_name
+        SELECT e.*, a.display_name as agent_name, q.display_name as qa_name,
+               le.display_name as last_editor_name
         ${baseQuery}
         ORDER BY e.id DESC
         LIMIT ? OFFSET ?
@@ -1726,14 +1745,90 @@ async function startServer() {
     });
 
     app.put("/api/evaluations/:id", async (req, res) => {
-      const { date, agent_id, qa_id, brand, call_type, final_score, critical_failure, data, status, is_wow } = req.body;
+      const { date, agent_id, qa_id, brand, call_type, final_score, critical_failure, data, status, is_wow, editor_id } = req.body;
+      const evaluation_id = req.params.id;
+
+      // Snapshot the row before the update so we can diff it for the QA edit
+      // trail (who changed what, when). Skipped silently if the row vanished.
+      const before = await db.prepare("SELECT * FROM evaluations WHERE id = ?").get(evaluation_id) as any;
+
+      const newStatus = status || 'completed';
       await db.prepare(`
         UPDATE evaluations
         SET date = ?, agent_id = ?, qa_id = ?, brand = ?, call_type = ?,
             final_score = ?, critical_failure = ?, data = ?, status = ?, is_wow = ?
         WHERE id = ?
-      `).run(date, agent_id, qa_id, brand, call_type, final_score, critical_failure ? 1 : 0, JSON.stringify(data), status || 'completed', is_wow ? 1 : 0, req.params.id);
+      `).run(date, agent_id, qa_id, brand, call_type, final_score, critical_failure ? 1 : 0, JSON.stringify(data), newStatus, is_wow ? 1 : 0, evaluation_id);
+
+      // Record a field-level edit entry when an editor is identified and
+      // something actually changed. Resolves question IDs to labels so the
+      // supervisor sees readable "what changed" rows.
+      if (editor_id && before) {
+        try {
+          const parseData = (d: any) => { try { return typeof d === 'string' ? JSON.parse(d) : (d || {}); } catch { return {}; } };
+          const oldData = parseData(before.data);
+          const newData = data || {};
+
+          const changes: any[] = [];
+          const pushIfChanged = (field: string, label: string, oldV: any, newV: any) => {
+            if (String(oldV ?? '') !== String(newV ?? '')) changes.push({ field, label, old: oldV ?? '', new: newV ?? '' });
+          };
+
+          pushIfChanged('final_score', 'Final Score', before.final_score, final_score);
+          pushIfChanged('status', 'Status', before.status, newStatus);
+          pushIfChanged('brand', 'Brand', before.brand, brand);
+          pushIfChanged('call_type', 'Call Type', before.call_type, call_type);
+          pushIfChanged('date', 'Date', before.date, date);
+          pushIfChanged('critical_failure', 'Critical Failure', before.critical_failure ? 'Yes' : 'No', critical_failure ? 'Yes' : 'No');
+          pushIfChanged('is_wow', 'WOW Call', before.is_wow ? 'Yes' : 'No', is_wow ? 'Yes' : 'No');
+          pushIfChanged('customer_phone', 'Customer Phone', oldData.customer_phone, newData.customer_phone);
+          pushIfChanged('call_duration', 'Call Duration', oldData.call_duration, newData.call_duration);
+          pushIfChanged('qa_note', 'QA Note', oldData?.feedback?.general, newData?.feedback?.general);
+
+          // Per-question response changes (Yes / No / N/A).
+          const oldResp = oldData.responses || {};
+          const newResp = newData.responses || {};
+          const qIds = Array.from(new Set([...Object.keys(oldResp), ...Object.keys(newResp)]));
+          if (qIds.length) {
+            const qRows = await db.prepare("SELECT id, label_en FROM form_settings WHERE field_type = 'eval_question'").all() as any[];
+            const labelMap: { [k: string]: string } = {};
+            qRows.forEach(r => { labelMap[String(r.id)] = r.label_en; });
+            qIds.forEach(qid => {
+              if (oldResp[qid] !== newResp[qid]) {
+                changes.push({ field: `response:${qid}`, label: labelMap[qid] || `Question #${qid}`, old: oldResp[qid] ?? '—', new: newResp[qid] ?? '—' });
+              }
+            });
+          }
+
+          if (changes.length) {
+            const editor = await db.prepare("SELECT display_name FROM users WHERE id = ?").get(editor_id) as any;
+            await db.prepare(
+              "INSERT INTO evaluation_edits (evaluation_id, editor_id, editor_name, changes) VALUES (?, ?, ?, ?)"
+            ).run(evaluation_id, editor_id, editor?.display_name || `User #${editor_id}`, JSON.stringify(changes));
+            await db.prepare("UPDATE evaluations SET last_edited_at = CURRENT_TIMESTAMP, last_edited_by = ? WHERE id = ?")
+              .run(editor_id, evaluation_id);
+          }
+        } catch (err) {
+          console.error("Failed to record evaluation edit:", err);
+        }
+      }
+
       res.json({ success: true });
+    });
+
+    // QA edit trail — full change history for one evaluation (supervisor audit).
+    app.get("/api/evaluations/:id/edits", async (req, res) => {
+      try {
+        const rows = await db.prepare(
+          "SELECT id, evaluation_id, editor_id, editor_name, changes, created_at FROM evaluation_edits WHERE evaluation_id = ? ORDER BY id DESC"
+        ).all(req.params.id) as any[];
+        res.json(rows.map(r => ({
+          ...r,
+          changes: (() => { try { return typeof r.changes === 'string' ? JSON.parse(r.changes) : (r.changes || []); } catch { return []; } })(),
+        })));
+      } catch (e: any) {
+        res.status(500).json({ error: e.message });
+      }
     });
 
     // Toggle a call's WOW flag — QA + Supervisor only. Lightweight endpoint

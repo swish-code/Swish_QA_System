@@ -317,11 +317,16 @@ export default function EvaluationForm() {
     }
   };
 
+  // QA edit mode — opened via the pencil icon (?edit=1). Lets a QA / supervisor
+  // edit an existing call regardless of status; the save is change-tracked.
+  const isQaEdit = !!id && searchParams.get('edit') === '1' && (user?.role === 'qa' || user?.role === 'supervisor');
+
   const isReadOnly = id && !(
-    (formData.status === 'Escalated' && (user?.role === 'qa' || user?.role === 'supervisor'))
+    (formData.status === 'Escalated' && (user?.role === 'qa' || user?.role === 'supervisor')) ||
+    isQaEdit
   );
-  
-  const isEditMode = id && formData.status === 'Escalated' && (user?.role === 'qa' || user?.role === 'supervisor');
+
+  const isEditMode = id && (formData.status === 'Escalated' || isQaEdit) && (user?.role === 'qa' || user?.role === 'supervisor');
   const isCreation = !id;
   const isViewingOnly = id && !isEditMode;
 
@@ -543,6 +548,9 @@ export default function EvaluationForm() {
       final_score: score,
       critical_failure: isCriticalFailed,
       qa_id: user?.id,
+      // Identifies the editor so the server records a change-tracked edit
+      // entry when updating an existing call (ignored on creation).
+      editor_id: id ? user?.id : undefined,
       // When submitting from a restored draft, the server marks that draft
       // as 'completed' so it disappears from the side panel.
       draft_id: activeDraftId || undefined,
@@ -572,7 +580,7 @@ export default function EvaluationForm() {
         // Refresh the drafts badge — server marked the draft 'completed'.
         if (activeDraftId) notifyDraftsChanged();
         alert(`Evaluation ${isCreation ? 'submitted' : 'updated'} successfully! Final Score: ${score}%`);
-        navigate('/');
+        navigate(isCreation ? '/' : '/audits');
       }
     } catch (err) {
       console.error(err);
@@ -1311,6 +1319,17 @@ export default function EvaluationForm() {
              className="px-12 py-4 rounded-2xl bg-emerald-600 text-white font-black text-[10px] uppercase tracking-[0.2em] shadow-2xl shadow-emerald-500/20 hover:bg-emerald-500 transition-all flex items-center gap-3 disabled:opacity-50"
            >
              {isSubmitting ? 'Processing...' : 'Submit Evaluation'} <Save size={16} />
+           </button>
+         )}
+
+         {/* QA Edit — save changes to an existing call (change-tracked) */}
+         {isQaEdit && (
+           <button
+             onClick={handleSubmit}
+             disabled={isSubmitting}
+             className="px-12 py-4 rounded-2xl bg-indigo-600 text-white font-black text-[10px] uppercase tracking-[0.2em] shadow-2xl shadow-indigo-500/20 hover:bg-indigo-500 transition-all flex items-center gap-3 disabled:opacity-50"
+           >
+             {isSubmitting ? 'Saving…' : 'Save Changes'} <Save size={16} />
            </button>
          )}
 

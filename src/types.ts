@@ -74,6 +74,10 @@ export interface Evaluation {
   agent_escalation_reason?: string | null;
   /** The TL's comment when approving / rejecting the agent's request. */
   agent_escalation_response?: string | null;
+  /** Set when a QA edited the call after submission — drives the blue row tint. */
+  last_edited_at?: string | null;
+  last_edited_by?: number | null;
+  last_editor_name?: string | null;
 }
 
 export interface Notification {

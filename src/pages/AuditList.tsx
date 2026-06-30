@@ -24,7 +24,9 @@ import {
   ArrowRightLeft,
   X,
   Clock,
-  Hourglass
+  Hourglass,
+  Pencil,
+  History
 } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Evaluation } from '../types';
@@ -68,6 +70,26 @@ export default function AuditList() {
   const [escalateReason, setEscalateReason] = useState('');
   const [isEscalating, setIsEscalating] = useState(false);
   const [escalateError, setEscalateError] = useState('');
+
+  // Edit-history viewer (admin/supervisor): who edited this call, what & when.
+  const [historyTarget, setHistoryTarget] = useState<Evaluation | null>(null);
+  const [editHistory, setEditHistory] = useState<any[]>([]);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+
+  const openEditHistory = async (audit: Evaluation) => {
+    setHistoryTarget(audit);
+    setEditHistory([]);
+    setIsLoadingHistory(true);
+    try {
+      const res = await fetch(`/api/evaluations/${audit.id}/edits`);
+      const data = await res.json();
+      setEditHistory(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  };
 
   // An agent may escalate a call only when it's visible to them ('Sent to
   // Agent'), scored below 100, and has never been escalated before. Calls
@@ -496,7 +518,11 @@ export default function AuditList() {
                   {evaluations.map((audit) => (
                     <tr
                       key={audit.id}
-                      className={`group hover:bg-zinc-50 dark:hover:bg-zinc-800/20 cursor-pointer ${isChangingPage ? 'opacity-30' : ''}`}
+                      className={`group cursor-pointer ${isChangingPage ? 'opacity-30' : ''} ${
+                        audit.last_edited_at
+                          ? 'bg-indigo-50/70 dark:bg-indigo-500/10 hover:bg-indigo-100/70 dark:hover:bg-indigo-500/15'
+                          : 'hover:bg-zinc-50 dark:hover:bg-zinc-800/20'
+                      }`}
                       onClick={() => navigate(`/evaluate/${audit.id}`)}
                     >
                     <td className="px-8 py-6">
@@ -507,6 +533,16 @@ export default function AuditList() {
                         <div>
                           <p className="text-sm font-bold text-zinc-900 dark:text-white group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors uppercase tracking-tight">{audit.agent_name}</p>
                           <p className="text-[10px] font-black text-zinc-400 dark:text-zinc-600 uppercase tracking-widest mt-1">ID: #{audit.agent_id}</p>
+                          {audit.last_edited_at && (
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); openEditHistory(audit); }}
+                              className="mt-1.5 inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-widest border bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/30 hover:bg-indigo-500 hover:text-white hover:border-indigo-500 transition-colors"
+                              title={`Edited${audit.last_editor_name ? ` by ${audit.last_editor_name}` : ''}${audit.last_edited_at ? ` · ${new Date(audit.last_edited_at).toLocaleString()}` : ''} — click for history`}
+                            >
+                              <Pencil size={10} /> Edited
+                            </button>
+                          )}
                         </div>
                       </div>
                     </td>
@@ -593,6 +629,15 @@ export default function AuditList() {
                          >
                            <Eye size={16} />
                          </button>
+                         {(user?.role === 'qa' || user?.role === 'supervisor') && (
+                           <button
+                             onClick={(e) => { e.stopPropagation(); navigate(`/evaluate/${audit.id}?edit=1`); }}
+                             className="p-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400 hover:bg-amber-500 hover:text-white hover:border-amber-500 transition-all"
+                             title="Edit this call"
+                           >
+                             <Pencil size={16} />
+                           </button>
+                         )}
                          {(user?.role === 'qa' || user?.role === 'supervisor') && (
                            <button
                              onClick={(e) => { e.stopPropagation(); handleEmailCall(audit); }}
@@ -845,6 +890,75 @@ export default function AuditList() {
                   {isEscalating ? 'Submitting…' : 'Submit Request'}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* Edit history (admin audit) — who edited this call, what changed, when */}
+      {historyTarget && createPortal(
+        <div
+          onClick={() => setHistoryTarget(null)}
+          className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/70 backdrop-blur-md overflow-y-auto"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-2xl rounded-3xl overflow-hidden bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 shadow-2xl my-auto max-h-[85vh] flex flex-col"
+          >
+            <div className="p-6 border-b border-zinc-100 dark:border-zinc-800 flex items-center justify-between bg-zinc-50 dark:bg-zinc-950/50 shrink-0">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="shrink-0 p-2 rounded-xl border bg-indigo-500/10 border-indigo-500/20 text-indigo-600 dark:text-indigo-400">
+                  <History size={22} />
+                </div>
+                <div className="min-w-0">
+                  <h3 className="text-lg font-bold text-zinc-900 dark:text-white uppercase tracking-tight truncate">Edit History</h3>
+                  <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mt-1 truncate">
+                    #{historyTarget.id} · {historyTarget.agent_name}
+                  </p>
+                </div>
+              </div>
+              <button onClick={() => setHistoryTarget(null)} className="shrink-0 p-2 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-lg text-zinc-500 transition-colors">
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-5 overflow-y-auto">
+              {isLoadingHistory ? (
+                <div className="flex items-center justify-center py-12">
+                  <div className="w-7 h-7 border-4 border-indigo-500/20 border-t-indigo-500 rounded-full animate-spin" />
+                </div>
+              ) : editHistory.length === 0 ? (
+                <p className="text-center text-zinc-400 dark:text-zinc-600 italic text-sm py-12">No edits recorded for this call.</p>
+              ) : (
+                editHistory.map((entry) => (
+                  <div key={entry.id} className="rounded-2xl border border-zinc-200 dark:border-zinc-800 overflow-hidden">
+                    <div className="flex items-center justify-between gap-3 px-4 py-3 bg-zinc-50 dark:bg-zinc-950/50 border-b border-zinc-100 dark:border-zinc-800">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div className="w-6 h-6 rounded-lg bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-[10px] font-black text-indigo-600 dark:text-indigo-400 shrink-0">
+                          {(entry.editor_name || '?').charAt(0)}
+                        </div>
+                        <span className="text-sm font-bold text-zinc-800 dark:text-zinc-200 truncate">{entry.editor_name || `User #${entry.editor_id}`}</span>
+                      </div>
+                      <span className="flex items-center gap-1.5 text-[10px] font-bold text-zinc-400 dark:text-zinc-500 shrink-0">
+                        <Clock size={12} /> {new Date(entry.created_at).toLocaleString()}
+                      </span>
+                    </div>
+                    <div className="divide-y divide-zinc-100 dark:divide-zinc-800/50">
+                      {(entry.changes || []).map((c: any, i: number) => (
+                        <div key={i} className="flex items-center gap-3 px-4 py-2.5 text-xs">
+                          <span className="font-black text-zinc-500 dark:text-zinc-400 uppercase tracking-widest text-[9px] w-32 shrink-0 truncate" title={c.label}>{c.label}</span>
+                          <span className="flex items-center gap-2 min-w-0 flex-1">
+                            <span className="px-2 py-0.5 rounded bg-rose-500/10 text-rose-600 dark:text-rose-400 font-medium line-through truncate max-w-[40%]" title={String(c.old)}>{String(c.old) || '—'}</span>
+                            <ChevronRight size={12} className="text-zinc-300 dark:text-zinc-700 shrink-0" />
+                            <span className="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-bold truncate max-w-[40%]" title={String(c.new)}>{String(c.new) || '—'}</span>
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
           </div>
         </div>,
