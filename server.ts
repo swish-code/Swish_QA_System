@@ -2938,7 +2938,7 @@ async function startServer() {
     // Stats & Analytics
     app.get("/api/stats/dashboard", async (req, res) => {
       try {
-        const { user_id, role } = req.query;
+        const { user_id, role, from_date, to_date } = req.query;
 
         // Build a unified base query joining evaluations to the agent so we
         // can apply the QA scope filter consistently (it joins on a.department).
@@ -2950,6 +2950,12 @@ async function startServer() {
           evalsQuery += " AND e.agent_id = ?";
           params.push(user_id);
         }
+
+        // Optional date-range filter (YYYY-MM-DD; the date column is TEXT so a
+        // string comparison sorts correctly). Applies to every headline stat,
+        // the top performers, and the escalation breakdown below.
+        if (from_date) { evalsQuery += " AND e.date >= ?"; params.push(from_date); }
+        if (to_date)   { evalsQuery += " AND e.date <= ?"; params.push(to_date); }
         // TL: legacy fallback handled after the brand scope clause below.
 
         // QA: restrict to assigned brands + departments. Also restrict the

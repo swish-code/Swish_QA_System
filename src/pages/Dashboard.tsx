@@ -18,7 +18,9 @@ import {
   Eye,
   CheckCircle2,
   XCircle,
-  Hourglass
+  Hourglass,
+  Calendar,
+  X
 } from 'lucide-react';
 import { 
   AreaChart, 
@@ -49,28 +51,61 @@ const leaderBoard = [
   { name: 'Layla Youssef', score: 94, trend: '+5%' },
 ];
 
+const fmtDate = (d: Date) => d.toISOString().slice(0, 10);
+
+const DATE_PRESETS: { key: string; label: string }[] = [
+  { key: 'all', label: 'All' },
+  { key: 'today', label: 'Today' },
+  { key: '7d', label: '7D' },
+  { key: '30d', label: '30D' },
+  { key: 'month', label: 'Month' },
+];
+
 export default function Dashboard() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [evals, setEvals] = useState<any[]>([]);
   const [stats, setStats] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
+  const [preset, setPreset] = useState('all');
+
+  const applyPreset = (key: string) => {
+    const today = new Date();
+    if (key === 'all') {
+      setFromDate(''); setToDate('');
+    } else if (key === 'today') {
+      const t = fmtDate(today); setFromDate(t); setToDate(t);
+    } else if (key === '7d') {
+      const s = new Date(); s.setDate(today.getDate() - 6);
+      setFromDate(fmtDate(s)); setToDate(fmtDate(today));
+    } else if (key === '30d') {
+      const s = new Date(); s.setDate(today.getDate() - 29);
+      setFromDate(fmtDate(s)); setToDate(fmtDate(today));
+    } else if (key === 'month') {
+      const s = new Date(today.getFullYear(), today.getMonth(), 1);
+      setFromDate(fmtDate(s)); setToDate(fmtDate(today));
+    }
+    setPreset(key);
+  };
 
   useEffect(() => {
     const fetchData = async () => {
       try {
+        const dateQs = `${fromDate ? `&from_date=${fromDate}` : ''}${toDate ? `&to_date=${toDate}` : ''}`;
         const [evalsRes, statsRes] = await Promise.all([
           fetch(`/api/evaluations?user_id=${user?.id}&role=${user?.role}`),
-          fetch(`/api/stats/dashboard?user_id=${user?.id}&role=${user?.role}`)
+          fetch(`/api/stats/dashboard?user_id=${user?.id}&role=${user?.role}${dateQs}`)
         ]);
-        
+
         if (!evalsRes.ok || !statsRes.ok) {
           throw new Error('Failed to fetch dashboard data');
         }
 
         const evalsData = await evalsRes.json();
         const statsData = await statsRes.json();
-        
+
         setEvals(evalsData.data || []);
         setStats(statsData);
       } catch (err) {
@@ -80,7 +115,7 @@ export default function Dashboard() {
       }
     };
     if (user) fetchData();
-  }, [user]);
+  }, [user, fromDate, toDate]);
 
   if (isLoading) {
     return (
@@ -98,10 +133,51 @@ export default function Dashboard() {
           <h2 className="text-2xl sm:text-3xl font-light text-zinc-900 dark:text-white tracking-tight mb-1">Welcome back, {user?.display_name} 👋</h2>
           <p className="text-zinc-500 text-sm">Here's your quality performance overview for today.</p>
         </div>
-        <div className="flex gap-4">
-          <div className="px-4 py-2 bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl flex items-center gap-2">
-            <Clock size={16} className="text-indigo-600 dark:text-indigo-400" />
-            <span className="text-xs font-bold text-zinc-500 dark:text-zinc-400">{new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
+        <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+          {/* Quick presets */}
+          <div className="flex items-center gap-1 bg-zinc-100 dark:bg-zinc-900 rounded-xl p-1">
+            {DATE_PRESETS.map(p => (
+              <button
+                key={p.key}
+                onClick={() => applyPreset(p.key)}
+                className={`px-3 py-1.5 rounded-lg text-[11px] font-bold uppercase tracking-widest transition-all ${
+                  preset === p.key
+                    ? 'bg-white dark:bg-zinc-950 text-indigo-600 dark:text-indigo-400 shadow-sm'
+                    : 'text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200'
+                }`}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Custom range */}
+          <div className="px-3 py-2 bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl flex items-center gap-2">
+            <Calendar size={14} className="text-indigo-600 dark:text-indigo-400 shrink-0" />
+            <input
+              type="date"
+              value={fromDate}
+              max={toDate || undefined}
+              onChange={(e) => { setFromDate(e.target.value); setPreset('custom'); }}
+              className="bg-transparent text-xs font-bold text-zinc-600 dark:text-zinc-300 outline-none w-[112px]"
+            />
+            <span className="text-zinc-400 dark:text-zinc-600">–</span>
+            <input
+              type="date"
+              value={toDate}
+              min={fromDate || undefined}
+              onChange={(e) => { setToDate(e.target.value); setPreset('custom'); }}
+              className="bg-transparent text-xs font-bold text-zinc-600 dark:text-zinc-300 outline-none w-[112px]"
+            />
+            {(fromDate || toDate) && (
+              <button
+                onClick={() => applyPreset('all')}
+                title="Clear filter"
+                className="text-zinc-400 hover:text-rose-500 dark:hover:text-rose-400 transition-colors shrink-0"
+              >
+                <X size={14} />
+              </button>
+            )}
           </div>
         </div>
       </div>
