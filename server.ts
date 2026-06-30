@@ -186,6 +186,18 @@ async function startServer() {
     // SQLite compat; default 0 leaves every existing call untouched.
     try { await db.exec("ALTER TABLE evaluations ADD COLUMN IF NOT EXISTS is_wow INTEGER DEFAULT 0"); } catch(e) {}
 
+    // Agent-initiated escalation (dispute). An Agent can request a re-review of
+    // their own call; their TL then approves (→ the call enters the normal
+    // Quality escalation flow) or rejects (→ request closed, optional reason
+    // shown back to the Agent). One request per call, ever.
+    //   agent_escalation_status:   NULL | 'pending' | 'approved' | 'rejected'
+    //   agent_escalation_reason:   the Agent's reason when requesting
+    //   agent_escalation_response: the TL's comment on approve / reject
+    try { await db.exec("ALTER TABLE evaluations ADD COLUMN IF NOT EXISTS agent_escalation_status TEXT"); } catch(e) {}
+    try { await db.exec("ALTER TABLE evaluations ADD COLUMN IF NOT EXISTS agent_escalation_reason TEXT"); } catch(e) {}
+    try { await db.exec("ALTER TABLE evaluations ADD COLUMN IF NOT EXISTS agent_escalation_response TEXT"); } catch(e) {}
+    try { await db.exec("ALTER TABLE evaluations ADD COLUMN IF NOT EXISTS agent_escalation_at TIMESTAMP"); } catch(e) {}
+
     // Admin manual override of a QA's calls count for a specific day.
     // Used by the Admin Supervisor to correct a day's number from the
     // QA KPIs detail page; flows through to the total and the score.
@@ -1734,6 +1746,122 @@ async function startServer() {
         await db.prepare("UPDATE evaluations SET is_wow = ? WHERE id = ?")
           .run(is_wow ? 1 : 0, req.params.id);
         res.json({ success: true, is_wow: !!is_wow });
+      } catch (e: any) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    // -----------------------------------------------------------------
+    // Agent-initiated escalation (dispute) — Agent → TL → (Quality | closed)
+    // -----------------------------------------------------------------
+
+    // Step 1: the Agent requests a re-review of their own call. Allowed only
+    // when the call is visible to them ('Sent to Agent'), scored below 100,
+    // and has never been escalated before (agent_escalation_status IS NULL).
+    app.post("/api/evaluations/:id/agent-escalate", async (req, res) => {
+      try {
+        const { user_id, reason } = req.body;
+        const evaluation_id = req.params.id;
+
+        const ev = await db.prepare(
+          "SELECT agent_id, qa_id, final_score, status, agent_escalation_status FROM evaluations WHERE id = ?"
+        ).get(evaluation_id) as any;
+        if (!ev) return res.status(404).json({ error: "Evaluation not found" });
+
+        // Must be the agent's own call.
+        if (Number(ev.agent_id) !== Number(user_id)) {
+          return res.status(403).json({ error: "You can only escalate your own calls." });
+        }
+        // Eligibility — mirrors the button-visibility rules on the client.
+        if (ev.status !== 'Sent to Agent') {
+          return res.status(400).json({ error: "This call is not eligible for escalation." });
+        }
+        if (Number(ev.final_score) >= 100) {
+          return res.status(400).json({ error: "Full-score calls cannot be escalated." });
+        }
+        if (ev.agent_escalation_status) {
+          return res.status(400).json({ error: "An escalation request already exists for this call." });
+        }
+
+        await db.prepare(
+          "UPDATE evaluations SET agent_escalation_status = 'pending', agent_escalation_reason = ?, agent_escalation_at = CURRENT_TIMESTAMP WHERE id = ?"
+        ).run(reason || null, evaluation_id);
+
+        // Use a distinct action ('requested') so the agent's request is never
+        // miscounted by the many queries that count action = 'escalated'.
+        await db.prepare(
+          "INSERT INTO escalation_logs (evaluation_id, user_id, role, action, comment, old_score, new_score) VALUES (?, ?, 'agent', 'requested', ?, ?, ?)"
+        ).run(evaluation_id, user_id, reason || '', ev.final_score, ev.final_score);
+
+        // Notify the agent's TL.
+        const agent = await db.prepare("SELECT display_name, tl_id FROM users WHERE id = ?").get(ev.agent_id) as any;
+        if (agent?.tl_id) {
+          await db.prepare("INSERT INTO notifications (user_id, title, message, evaluation_id) VALUES (?, ?, ?, ?)")
+            .run(
+              agent.tl_id,
+              "Agent Escalation Request",
+              `${agent.display_name} requested a re-review of evaluation #${evaluation_id} (score ${ev.final_score}%).\nReason: ${reason || '(none)'}`,
+              evaluation_id
+            );
+        }
+
+        res.json({ success: true });
+      } catch (e: any) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    // Step 2: the TL decides on a pending agent escalation request.
+    //   approve → call enters the normal Quality escalation flow ('Escalated')
+    //   reject  → request closed, call stays 'Sent to Agent', reason kept
+    app.post("/api/evaluations/:id/agent-escalation-decision", async (req, res) => {
+      try {
+        const { user_id, action, comment } = req.body; // action: 'approve' | 'reject'
+        const evaluation_id = req.params.id;
+
+        const ev = await db.prepare(
+          "SELECT agent_id, qa_id, final_score, status, agent_escalation_status FROM evaluations WHERE id = ?"
+        ).get(evaluation_id) as any;
+        if (!ev) return res.status(404).json({ error: "Evaluation not found" });
+        if (ev.agent_escalation_status !== 'pending') {
+          return res.status(400).json({ error: "No pending escalation request for this call." });
+        }
+
+        const tl = await db.prepare("SELECT display_name FROM users WHERE id = ?").get(user_id) as any;
+        const tlName = tl?.display_name || `TL #${user_id}`;
+        const actionTime = new Date().toLocaleString();
+
+        if (action === 'approve') {
+          // Hand off to the normal Quality review cycle.
+          await db.prepare(
+            "UPDATE evaluations SET agent_escalation_status = 'approved', agent_escalation_response = ?, status = 'Escalated' WHERE id = ?"
+          ).run(comment || null, evaluation_id);
+
+          // Log as a standard TL escalation so Quality picks it up and the
+          // audit trail / dashboard stats stay consistent.
+          await db.prepare(
+            "INSERT INTO escalation_logs (evaluation_id, user_id, role, action, comment, old_score, new_score) VALUES (?, ?, 'tl', 'escalated', ?, ?, ?)"
+          ).run(evaluation_id, user_id, comment || 'Approved agent escalation request', ev.final_score, ev.final_score);
+
+          await db.prepare("INSERT INTO notifications (user_id, title, message, evaluation_id) VALUES (?, ?, ?, ?)")
+            .run(ev.qa_id, "Evaluation Escalated (Agent request)", `${tlName} approved an agent escalation for evaluation #${evaluation_id} on ${actionTime}. Please review.`, evaluation_id);
+          await db.prepare("INSERT INTO notifications (user_id, title, message, evaluation_id) VALUES (?, ?, ?, ?)")
+            .run(ev.agent_id, "Escalation Approved", `${tlName} approved your escalation request for evaluation #${evaluation_id}. It has been sent to Quality for review.`, evaluation_id);
+        } else {
+          // Reject — close the request; the call is unchanged.
+          await db.prepare(
+            "UPDATE evaluations SET agent_escalation_status = 'rejected', agent_escalation_response = ? WHERE id = ?"
+          ).run(comment || null, evaluation_id);
+
+          await db.prepare(
+            "INSERT INTO escalation_logs (evaluation_id, user_id, role, action, comment, old_score, new_score) VALUES (?, ?, 'tl', 'rejected', ?, ?, ?)"
+          ).run(evaluation_id, user_id, comment || 'Rejected agent escalation request', ev.final_score, ev.final_score);
+
+          await db.prepare("INSERT INTO notifications (user_id, title, message, evaluation_id) VALUES (?, ?, ?, ?)")
+            .run(ev.agent_id, "Escalation Rejected", `${tlName} rejected your escalation request for evaluation #${evaluation_id}.\nReason: ${comment || '(none)'}`, evaluation_id);
+        }
+
+        res.json({ success: true });
       } catch (e: any) {
         res.status(500).json({ error: e.message });
       }

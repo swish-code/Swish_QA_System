@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import CoachingRequestDialog from '../components/CoachingRequestDialog';
 import CoachingDetailsDialog from '../components/CoachingDetailsDialog';
 import { useAuth } from '../context/AuthContext';
@@ -19,7 +20,11 @@ import {
   ShieldAlert,
   MessageSquare,
   MoreHorizontal,
-  ChevronDown
+  ChevronDown,
+  ArrowRightLeft,
+  X,
+  Clock,
+  Hourglass
 } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Evaluation } from '../types';
@@ -57,6 +62,47 @@ export default function AuditList() {
   const [coachingTarget, setCoachingTarget] = useState<Evaluation | null>(null);
   // Evaluation row whose coaching badge was clicked — opens the details modal.
   const [coachingDetails, setCoachingDetails] = useState<Evaluation | null>(null);
+
+  // Agent escalation (dispute) request flow.
+  const [escalateTarget, setEscalateTarget] = useState<Evaluation | null>(null);
+  const [escalateReason, setEscalateReason] = useState('');
+  const [isEscalating, setIsEscalating] = useState(false);
+  const [escalateError, setEscalateError] = useState('');
+
+  // An agent may escalate a call only when it's visible to them ('Sent to
+  // Agent'), scored below 100, and has never been escalated before. Calls
+  // already in / past the Leader↔Quality cycle are excluded.
+  const canAgentEscalate = useCallback((audit: Evaluation) => (
+    user?.role === 'agent' &&
+    audit.status === 'Sent to Agent' &&
+    audit.final_score < 100 &&
+    !audit.agent_escalation_status
+  ), [user]);
+
+  const submitAgentEscalation = async () => {
+    if (!escalateTarget || !user?.id) return;
+    setIsEscalating(true);
+    setEscalateError('');
+    try {
+      const res = await fetch(`/api/evaluations/${escalateTarget.id}/agent-escalate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: user.id, reason: escalateReason.trim() }),
+      });
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setEscalateError(result.error || 'Failed to submit escalation request.');
+        return;
+      }
+      setEscalateTarget(null);
+      setEscalateReason('');
+      fetchEvaluations(searchParams);
+    } catch (err) {
+      setEscalateError('Network error — please try again.');
+    } finally {
+      setIsEscalating(false);
+    }
+  };
 
   const fetchEvaluations = useCallback(async (params: URLSearchParams) => {
     setIsChangingPage(true);
@@ -569,6 +615,37 @@ export default function AuditList() {
                              <span className="hidden md:inline">Coaching</span>
                            </button>
                          )}
+
+                         {/* Agent escalation (dispute) — button + status badges */}
+                         {canAgentEscalate(audit) && (
+                           <button
+                             onClick={(e) => { e.stopPropagation(); setEscalateError(''); setEscalateReason(''); setEscalateTarget(audit); }}
+                             className="px-3 py-2 rounded-lg bg-indigo-500/10 border border-indigo-500/30 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-500 hover:text-white hover:border-indigo-500 transition-all flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest"
+                             title="Request a re-review of this call from your Team Leader"
+                           >
+                             <ArrowRightLeft size={14} />
+                             <span className="hidden md:inline">Escalate</span>
+                           </button>
+                         )}
+                         {user?.role === 'agent' && audit.agent_escalation_status === 'pending' && (
+                           <span
+                             className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest border bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30"
+                             title="Awaiting your Team Leader's decision"
+                           >
+                             <Hourglass size={14} />
+                             <span className="hidden md:inline">Pending</span>
+                           </span>
+                         )}
+                         {user?.role === 'agent' && audit.agent_escalation_status === 'rejected' && (
+                           <span
+                             className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest border bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/30"
+                             title={audit.agent_escalation_response ? `Reason: ${audit.agent_escalation_response}` : 'Your escalation request was rejected'}
+                           >
+                             <X size={14} />
+                             <span className="hidden md:inline">Rejected</span>
+                           </span>
+                         )}
+
                          <button
                            onClick={(e) => e.stopPropagation()}
                            className="p-2 rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-zinc-500 hover:text-indigo-600 dark:hover:text-white hover:border-indigo-300 dark:hover:border-zinc-600 transition-all"
@@ -698,6 +775,80 @@ export default function AuditList() {
           evaluationId={coachingDetails.id}
           onClose={() => setCoachingDetails(null)}
         />
+      )}
+
+      {/* Agent escalation request modal */}
+      {escalateTarget && createPortal(
+        <div
+          onClick={() => !isEscalating && setEscalateTarget(null)}
+          className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/70 backdrop-blur-md overflow-y-auto"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-lg rounded-3xl overflow-hidden bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 shadow-2xl my-auto"
+          >
+            <div className="p-6 border-b border-zinc-100 dark:border-zinc-800 flex items-center justify-between bg-zinc-50 dark:bg-zinc-950/50">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="shrink-0 p-2 rounded-xl border bg-indigo-500/10 border-indigo-500/20 text-indigo-600 dark:text-indigo-400">
+                  <ArrowRightLeft size={22} />
+                </div>
+                <div className="min-w-0">
+                  <h3 className="text-lg font-bold text-zinc-900 dark:text-white uppercase tracking-tight truncate">Escalate Call</h3>
+                  <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mt-1 truncate">
+                    {escalateTarget.brand} / {escalateTarget.call_type} · {escalateTarget.final_score}%
+                  </p>
+                </div>
+              </div>
+              <button onClick={() => !isEscalating && setEscalateTarget(null)} className="shrink-0 p-2 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-lg text-zinc-500 transition-colors">
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-5">
+              <div className="p-4 bg-indigo-50/60 dark:bg-indigo-500/5 rounded-2xl border border-indigo-200 dark:border-indigo-500/20 flex items-start gap-3">
+                <Clock size={16} className="text-indigo-600 dark:text-indigo-400 mt-0.5 shrink-0" />
+                <p className="text-[11px] text-zinc-600 dark:text-zinc-400 leading-relaxed font-medium">
+                  Your request goes to your <span className="font-black text-zinc-800 dark:text-zinc-200">Team Leader</span>. If approved, the call is sent to Quality for re-review. You can submit only <span className="font-black text-zinc-800 dark:text-zinc-200">one</span> request per call.
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em] block">
+                  Reason <span className="text-zinc-400 normal-case font-bold tracking-normal">(optional, but recommended)</span>
+                </label>
+                <textarea
+                  className="w-full min-h-[110px] text-sm resize-none bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-2xl px-4 py-3 text-zinc-800 dark:text-zinc-100 outline-none focus:border-indigo-500 placeholder:text-zinc-400"
+                  placeholder="Explain why you believe this call should be re-reviewed..."
+                  value={escalateReason}
+                  onChange={(e) => setEscalateReason(e.target.value)}
+                  disabled={isEscalating}
+                />
+              </div>
+
+              {escalateError && (
+                <p className="text-[11px] font-bold text-rose-600 dark:text-rose-400">{escalateError}</p>
+              )}
+
+              <div className="flex gap-3 pt-1">
+                <button
+                  onClick={() => setEscalateTarget(null)}
+                  disabled={isEscalating}
+                  className="flex-1 px-6 py-3 rounded-2xl bg-zinc-100 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 text-zinc-600 dark:text-zinc-400 font-black text-[10px] uppercase tracking-[0.2em] hover:bg-zinc-200 dark:hover:bg-zinc-900 hover:text-zinc-900 dark:hover:text-white transition-all disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={submitAgentEscalation}
+                  disabled={isEscalating}
+                  className="flex-1 px-6 py-3 rounded-2xl font-black text-[10px] uppercase tracking-[0.2em] text-white bg-indigo-600 shadow-lg shadow-indigo-500/20 hover:bg-indigo-500 transition-all disabled:opacity-50"
+                >
+                  {isEscalating ? 'Submitting…' : 'Submit Request'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>,
+        document.body
       )}
     </div>
   );

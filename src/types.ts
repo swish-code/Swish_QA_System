@@ -68,6 +68,12 @@ export interface Evaluation {
   data: Record<string, any>;
   /** Server-attached coaching summary. Null = call has never been coached. */
   coaching?: CoachingSnapshot | null;
+  /** Agent-initiated escalation (dispute) lifecycle. Null = never requested. */
+  agent_escalation_status?: 'pending' | 'approved' | 'rejected' | null;
+  /** The Agent's reason when they requested the escalation. */
+  agent_escalation_reason?: string | null;
+  /** The TL's comment when approving / rejecting the agent's request. */
+  agent_escalation_response?: string | null;
 }
 
 export interface Notification {
