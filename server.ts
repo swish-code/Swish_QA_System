@@ -637,6 +637,123 @@ async function startServer() {
       console.error('call_type dedup migration failed:', err);
     }
 
+    // ----------------------------------------------------------------
+    // Bulk user seed — onboarding roster pulled from the admin's
+    // spreadsheet. Idempotent via a marker; runs once per environment.
+    //
+    //   Pass 1 — INSERT every user with a unique username. Skipped
+    //            silently if the username is already in the table
+    //            (so re-running against a partially-seeded DB is safe).
+    //   Pass 2 — Resolve every "Team Leader" name to the TL's user.id
+    //            and UPDATE the agent's tl_id. TLs not present in this
+    //            roster are logged and left unlinked.
+    //
+    // EMPLOYEE / AGENT both map to role='agent'. TL maps to 'tl'.
+    // Department defaults to 'Swish' (admin can rebucket via User
+    // Management). Default password = username + '123' where the
+    // spreadsheet showed "(set in new system)".
+    // ----------------------------------------------------------------
+    try {
+      const SEED_MARKER = 'bulk_users_seed_v1_2026_07';
+      const seenMarker = await db.prepare(
+        "SELECT id FROM form_settings WHERE field_type = '_meta' AND value = ?"
+      ).get(SEED_MARKER) as any;
+
+      if (!seenMarker) {
+        type SeedUser = { name: string; username: string; password: string; role: 'agent' | 'tl'; tl_name: string | null };
+        const USERS: SeedUser[] = [
+          // ---- TLs first so they exist before agents reference them
+          { name: 'Ahmed Bahaa',     username: 'Ahmed_Bahaa',                      password: 'Ahmed_Bahaa123',                      role: 'tl', tl_name: null },
+          { name: 'Ahmed Hussain',   username: 'ahmedhussien20485@gmail.com',      password: 'ahmedhussien20485@gmail.com123',      role: 'tl', tl_name: null },
+          { name: 'Atef Salem',      username: 'Atef_Salem',                       password: 'Atef_Salem123',                       role: 'tl', tl_name: null },
+          { name: 'Mohamed Nashaat', username: 'mohamednashaat589@gmail.comm',     password: 'mohamednashaat589@gmail.comm123',     role: 'tl', tl_name: null },
+          { name: 'Mostafa Mahmoud', username: 'M.eldeeb@swishhh.net',             password: 'M.eldeeb@swishhh.net123',             role: 'tl', tl_name: null },
+
+          // ---- Agents (incl. EMPLOYEE rows from the sheet)
+          { name: 'Abdelrahman Abdallah',     username: 'abdoalaa920@gmail.com',                password: 'abdoalaa920@gmail.com123',                role: 'agent', tl_name: null },
+          { name: 'Abdullah Mahmoud',         username: 'Abdullah.Mahmoud9946@gmail.com',       password: 'Abdullah.Mahmoud9946@gmail.com123',       role: 'agent', tl_name: 'Mostafa Mahmoud' },
+          { name: 'Ahmed Bader',              username: 'Ahmed Bader',                          password: 'Ahmed Bader',                             role: 'agent', tl_name: null },
+          { name: 'Ahmed Ezzat',              username: 'Ahmed Ezzat',                          password: 'Ahmed Ezzat',                             role: 'agent', tl_name: null },
+          { name: 'Hesham Sayed',             username: 'Hesham Sayed',                         password: 'Hesham Sayed',                            role: 'agent', tl_name: null },
+          { name: 'Malak Hany',               username: 'malakhanyy2005@icloud.com',            password: 'malakhanyy2005@icloud.com123',            role: 'agent', tl_name: 'Mostafa Mahmoud' },
+          { name: 'Mostafa Mahmoud Abdelgawad', username: 'Mostafa Mahmoud Abdelgawad',         password: 'Mostafa Mahmoud Abdelgawad',              role: 'agent', tl_name: null },
+          { name: 'Shref Ouda',               username: 'sherifouda97@gmail.com',               password: 'sherifouda97@gmail.com123',               role: 'agent', tl_name: 'Mostafa Mahmoud' },
+          { name: 'Walaa zain',               username: 'Walaa_zain',                           password: 'Walaa_zain123',                           role: 'agent', tl_name: 'Mostafa Mahmoud' },
+          { name: 'Yousif Hamdy',             username: 'Yousif Hamdy',                         password: 'Yousif Hamdy',                            role: 'agent', tl_name: null },
+          { name: 'Ahmed Kader',              username: 'Ahmed_Kader',                          password: 'Ahmed_Kader123',                          role: 'agent', tl_name: 'Ahmed Bahaa' },
+          { name: 'Ahmed Kamel',              username: 'ahmed.mohamed.kamel2016@gmail.com',    password: 'ahmed.mohamed.kamel2016@gmail.com123',    role: 'agent', tl_name: 'Ahmed Bahaa' },
+          { name: 'Ahmed Mahmoud',            username: 'Ahmed_Mahmoud',                        password: 'Ahmed_Mahmoud123',                        role: 'agent', tl_name: 'Ahmed Bahaa' },
+          { name: 'loay mohamed',             username: 'louaymahfouz@gmail.com',               password: 'louaymahfouz@gmail.com123',               role: 'agent', tl_name: 'Ahmed Bahaa' },
+          { name: 'Mahmoud Ahmed Hassan',     username: 'elsherifmahmoud31@gmail.com',          password: 'elsherifmahmoud31@gmail.com123',          role: 'agent', tl_name: 'Ahmed Bahaa' },
+          { name: 'Samah Yasser',             username: 'yassersamah32@gmail.com',              password: 'yassersamah32@gmail.com123',              role: 'agent', tl_name: 'Ahmed Bahaa' },
+          { name: 'Abdelwahab Gomaa',         username: 'abdo.gomaa121099@gmail.com',           password: 'abdo.gomaa121099@gmail.com123',           role: 'agent', tl_name: 'Ahmed Hussain' },
+          { name: 'Mahmoud Hamed',            username: 'moda.tegara@gmail.com',                password: 'moda.tegara@gmail.com123',                role: 'agent', tl_name: 'Ahmed Hussain' },
+          { name: 'Mahmoud Kamal',            username: 'Mahmoudkamaleldein90@gmail.com',       password: 'Mahmoudkamaleldein90@gmail.com123',       role: 'agent', tl_name: 'Ahmed Hussain' },
+          { name: 'Marwan Adel',              username: 'Marwan_Adel',                          password: 'Marwan_Adel123',                          role: 'agent', tl_name: 'Ahmed Hussain' },
+          { name: 'Mohamed Anwar',            username: 'Muhammadellwan@gmail.com',             password: 'Muhammadellwan@gmail.com123',             role: 'agent', tl_name: 'Ahmed Hussain' },
+          { name: 'Ali Mohamed',              username: 'alimuhamedali79@gmail.com',            password: 'alimuhamedali79@gmail.com123',            role: 'agent', tl_name: 'Ahmed Shokr' /* not in roster — will stay unlinked */ },
+          { name: 'Ahmed Alaa',               username: 'alaaahmed253@gmail.com',               password: 'alaaahmed253@gmail.com123',               role: 'agent', tl_name: 'Atef Salem' },
+          { name: 'Ahmed Disouky',            username: 'reddragon3k@gmail.com',                password: 'reddragon3k@gmail.com123',                role: 'agent', tl_name: 'Atef Salem' },
+          { name: 'Ahmed Husseinibrahem',     username: 'Ahlawyelmasry@gmail.com',              password: 'Ahlawyelmasry@gmail.com123',              role: 'agent', tl_name: 'Atef Salem' },
+          { name: 'Mohamed Esmael',           username: 'me537537@gmail.com',                   password: 'me537537@gmail.com123',                   role: 'agent', tl_name: 'Atef Salem' },
+          { name: 'Shaymaa Ahmed',            username: 'shaymaakhfaga98@gmail.com',            password: 'shaymaakhfaga98@gmail.com123',            role: 'agent', tl_name: 'Atef Salem' },
+          { name: 'Soliman Ahmed',            username: 'Solom2002000@gmail.com',               password: 'Solom2002000@gmail.com123',               role: 'agent', tl_name: 'Atef Salem' },
+          { name: 'Abdallah Fathy',           username: 'fathyabdallah378@gmail.com',           password: 'fathyabdallah378@gmail.com123',           role: 'agent', tl_name: 'Mohamed Nashaat' },
+          { name: 'Aya Ramadan',              username: 'aya97ramadan@gmail.com',               password: 'aya97ramadan@gmail.com123',               role: 'agent', tl_name: 'Mohamed Nashaat' },
+          { name: 'Milad Moussa',             username: 'miladmoussa2@gmail.com',               password: 'miladmoussa2@gmail.com123' /* spreadsheet said "set in new system" → use default */, role: 'agent', tl_name: 'Mohamed Nashaat' },
+          { name: 'Mohamed Gharieb',          username: 'mohmmedgharieb@gmail.com',             password: 'mohmmedgharieb@gmail.com123',             role: 'agent', tl_name: 'Mohamed Nashaat' },
+          { name: 'Mohamed Shokry',           username: 'moshokry85@gmail.com',                 password: 'moshokry85@gmail.com123',                 role: 'agent', tl_name: 'Mohamed Nashaat' },
+          { name: 'Muhammed Gaber',           username: 'muhammed.gaberx@gmail.com',            password: 'muhammed.gaberx@gmail.com123',            role: 'agent', tl_name: 'Mohamed Nashaat' },
+          // Second "Ahmed Mahmoud" — different username so the unique constraint is fine.
+          { name: 'Ahmed Mahmoud',            username: 'Ahmed Mahmoud',                        password: 'Ahmed Mahmoud2252',                       role: 'agent', tl_name: 'Mostafa Mahmoud' },
+        ];
+
+        let inserted = 0;
+        let skipped = 0;
+        for (const u of USERS) {
+          const existing = await db.prepare("SELECT id FROM users WHERE username = ?").get(u.username) as any;
+          if (existing) { skipped++; continue; }
+          const hashed = bcrypt.hashSync(u.password, 10);
+          try {
+            await db.prepare(
+              "INSERT INTO users (display_name, username, password, role, department) VALUES (?, ?, ?, ?, 'Swish')"
+            ).run(u.name, u.username, hashed, u.role);
+            inserted++;
+          } catch (e) {
+            console.error(`Failed to insert ${u.username}:`, e);
+          }
+        }
+
+        // Pass 2 — resolve TL links. Look up TL by display_name + role='tl'
+        // so "Mostafa Mahmoud" (TL) doesn't collide with the unrelated
+        // "Mostafa Mahmoud Abdelgawad" (agent) in the same roster.
+        let linked = 0;
+        let unresolved = 0;
+        for (const u of USERS) {
+          if (!u.tl_name) continue;
+          const tl = await db.prepare(
+            "SELECT id FROM users WHERE display_name = ? AND role = 'tl'"
+          ).get(u.tl_name) as any;
+          if (!tl) {
+            console.warn(`Bulk seed: TL "${u.tl_name}" not in roster — leaving ${u.username} unlinked`);
+            unresolved++;
+            continue;
+          }
+          await db.prepare(
+            "UPDATE users SET tl_id = ? WHERE username = ?"
+          ).run(tl.id, u.username);
+          linked++;
+        }
+
+        await db.prepare(
+          "INSERT INTO form_settings (field_type, label_en, value, is_active, sort_order) VALUES ('_meta', 'bulk user roster seeded', ?, 0, 0)"
+        ).run(SEED_MARKER);
+        console.log(`Bulk users seeded — inserted ${inserted}, skipped ${skipped}, linked ${linked}, unresolved TL refs ${unresolved}`);
+      }
+    } catch (err) {
+      console.error('Bulk users seed migration failed:', err);
+    }
+
     // Seed initial form settings if empty or missing evaluation criteria
     try {
       const settingsCount = (await db.prepare("SELECT COUNT(*) as count FROM form_settings").get() as any).count;
