@@ -572,6 +572,71 @@ async function startServer() {
       console.error('Scorecards v1 migration failed:', err);
     }
 
+    // Cleanup migration — dedupe call_type rows case-insensitively.
+    // The previous scorecard seed used a case-sensitive equality check,
+    // so older lower-case rows like "New order" / "Follow up" survived
+    // alongside the new canonical "New Order" / "Follow Up". Result:
+    // the call type dropdown showed each option twice.
+    //
+    // Idempotent via a fresh marker. For each canonical name:
+    //   1. Find every row whose value matches case-insensitively.
+    //   2. Keep the first (lowest id), rewrite its value to the
+    //      canonical casing, and set is_active = 1.
+    //   3. Deactivate any other matching row so it disappears from
+    //      the dropdown without losing the historical record on
+    //      existing evaluations.
+    //   4. Deactivate any call_type row not in the canonical list.
+    try {
+      const DEDUP_MARKER = 'call_types_dedup_2026_07';
+      const already = await db.prepare(
+        "SELECT id FROM form_settings WHERE field_type = '_meta' AND value = ?"
+      ).get(DEDUP_MARKER) as any;
+
+      if (!already) {
+        const CANONICAL = ['New Order', 'Inquiry', 'Follow Up', 'Complaints', 'Outbound'];
+        const canonicalLower = new Set(CANONICAL.map(c => c.toLowerCase()));
+
+        for (const canonical of CANONICAL) {
+          const matches = await db.prepare(
+            "SELECT id, value FROM form_settings WHERE field_type = 'call_type' AND LOWER(value) = LOWER(?) ORDER BY id ASC"
+          ).all(canonical) as any[];
+
+          if (matches.length === 0) {
+            await db.prepare(
+              "INSERT INTO form_settings (field_type, label_en, label_ar, value, is_active, sort_order) VALUES ('call_type', ?, ?, ?, 1, 0)"
+            ).run(canonical, canonical, canonical);
+            continue;
+          }
+          // Keep the first row, rewrite to canonical casing, activate it.
+          const keep = matches[0];
+          await db.prepare(
+            "UPDATE form_settings SET value = ?, label_en = ?, is_active = 1 WHERE id = ?"
+          ).run(canonical, canonical, keep.id);
+          // Deactivate the others.
+          for (let i = 1; i < matches.length; i++) {
+            await db.prepare("UPDATE form_settings SET is_active = 0 WHERE id = ?").run(matches[i].id);
+          }
+        }
+
+        // Deactivate any call_type row that isn't in the canonical list.
+        const all = await db.prepare(
+          "SELECT id, value FROM form_settings WHERE field_type = 'call_type'"
+        ).all() as any[];
+        for (const r of all) {
+          if (!canonicalLower.has(String(r.value || '').toLowerCase())) {
+            await db.prepare("UPDATE form_settings SET is_active = 0 WHERE id = ?").run(r.id);
+          }
+        }
+
+        await db.prepare(
+          "INSERT INTO form_settings (field_type, label_en, value, is_active, sort_order) VALUES ('_meta', 'call_types deduplicated', ?, 0, 0)"
+        ).run(DEDUP_MARKER);
+        console.log(`call_type dropdown deduplicated (${DEDUP_MARKER})`);
+      }
+    } catch (err) {
+      console.error('call_type dedup migration failed:', err);
+    }
+
     // Seed initial form settings if empty or missing evaluation criteria
     try {
       const settingsCount = (await db.prepare("SELECT COUNT(*) as count FROM form_settings").get() as any).count;
