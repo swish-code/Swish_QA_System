@@ -96,6 +96,11 @@ export default function EvaluationForm() {
   const [pendingAction, setPendingAction] = useState<'approved' | 'escalated' | 'rejected' | null>(null);
 
   const [formStructure, setFormStructure] = useState<any[]>([]);
+  // Raw eval_section + eval_question rows from form_settings — kept so the
+  // structure can be rebuilt whenever formData.call_type changes (each
+  // call type has its own attribute list and weights per the QA Manual).
+  const [rawSections, setRawSections] = useState<any[]>([]);
+  const [rawQuestions, setRawQuestions] = useState<any[]>([]);
 
   // Single source of truth for the empty-form shape — used at mount AND
   // when Save-as-Draft wipes the form so the user can start fresh.
@@ -146,6 +151,61 @@ export default function EvaluationForm() {
   useEffect(() => {
     fetchFormOptions();
   }, []);
+
+  // Rebuild formStructure whenever the raw rows OR the selected call type
+  // change. Each question carries the call_types it applies to and the
+  // weights_by_type map, both seeded from the QA Manual scorecards.
+  // Falls back gracefully for legacy questions that don't have these
+  // fields — they apply to every call type with their static weight.
+  useEffect(() => {
+    if (!rawSections.length || !rawQuestions.length) return;
+    const selected = formData.call_type;
+
+    const structure = rawSections
+      .sort((a: any, b: any) => (a.sort_order || 0) - (b.sort_order || 0))
+      .map((section: any) => {
+        const items = rawQuestions
+          .map((q: any) => {
+            let cfg: any = {};
+            try { cfg = typeof q.value === 'string' ? JSON.parse(q.value) : q.value; } catch {}
+            if (cfg.section !== section.value) return null;
+
+            // Call-type filter — a question with call_types = [] or
+            // missing applies to every call type (legacy compat).
+            const callTypes: string[] = Array.isArray(cfg.call_types) ? cfg.call_types : [];
+            if (callTypes.length > 0 && selected && !callTypes.includes(selected)) {
+              return null;
+            }
+
+            // Pick the per-call-type weight when available; fall back to
+            // the legacy single weight.
+            const weight = cfg.weights_by_type && selected && cfg.weights_by_type[selected] != null
+              ? Number(cfg.weights_by_type[selected])
+              : Number(cfg.weight) || 0;
+
+            return {
+              id: q.id.toString(),
+              db_value: q.value,
+              label: q.label_en,
+              label_ar: q.label_ar,
+              weight,
+              critical: !!cfg.critical,
+              category: cfg.category || null,
+            };
+          })
+          .filter(Boolean)
+          .sort((a: any, b: any) => (b.weight || 0) - (a.weight || 0));
+        return {
+          id: section.value,
+          title: section.label_en,
+          title_ar: section.label_ar,
+          items,
+        };
+      })
+      .filter((s: any) => s.items.length > 0);
+
+    setFormStructure(structure);
+  }, [rawSections, rawQuestions, formData.call_type]);
 
   // Restore a draft if /evaluate?draft=<id> was used.
   useEffect(() => {
@@ -204,35 +264,11 @@ export default function EvaluationForm() {
       const sections = settings.filter((s: any) => s.field_type === 'eval_section' && s.is_active);
       const questions = settings.filter((s: any) => s.field_type === 'eval_question' && s.is_active);
 
-      const dynamicStructure = sections.sort((a: any, b: any) => (a.sort_order || 0) - (b.sort_order || 0)).map((section: any) => {
-        const sectionQuestions = questions.filter((q: any) => {
-          try {
-            const config = typeof q.value === 'string' ? JSON.parse(q.value) : q.value;
-            return config.section === section.value;
-          } catch {
-            return false;
-          }
-        }).sort((a: any, b: any) => (a.sort_order || 0) - (b.sort_order || 0)).map((q: any) => {
-          const config = typeof q.value === 'string' ? JSON.parse(q.value) : q.value;
-          return {
-            id: q.id.toString(),
-            db_value: q.value,
-            label: q.label_en,
-            label_ar: q.label_ar,
-            weight: config.weight,
-            critical: config.critical
-          };
-        });
-
-        return {
-          id: section.value,
-          title: section.label_en,
-          title_ar: section.label_ar,
-          items: sectionQuestions
-        };
-      }).filter((s: any) => s.items.length > 0);
-
-      setFormStructure(dynamicStructure);
+      // Keep the raw rows in state so the call-type-driven rebuild can
+      // run later without re-fetching. The actual structure is computed
+      // in the call-type-aware useEffect below.
+      setRawSections(sections);
+      setRawQuestions(questions);
 
       settings.filter((s: any) => s.is_active).forEach((s: any) => {
         if (options[s.field_type]) {
@@ -380,28 +416,35 @@ export default function EvaluationForm() {
     // Hard override: QA explicitly marked the call as a critical failure.
     if (formData.force_zero_score) return 0;
 
-    let totalPossible = 0;
-    let totalDeductions = 0;
+    // Per the QA Manual:
+    //   Final Score = Σ(weights of passed attributes) / Σ(all weights) × 100
+    // N/A responses are excluded from BOTH numerator and denominator so
+    // they don't pull the score down for cases where an attribute simply
+    // doesn't apply to this call.
+    let totalWeight = 0;
+    let passedWeight = 0;
     let isCriticalFailed = false;
 
     formStructure.forEach(section => {
       section.items.forEach((item: any) => {
         const response = formData.responses[item.id] || 'Yes';
-
         if (response === 'N/A') return;
 
-        totalPossible += item.weight;
+        const w = Number(item.weight) || 0;
+        totalWeight += w;
 
         if (response === 'No') {
-          totalDeductions += item.weight;
           if (item.critical) isCriticalFailed = true;
+        } else {
+          // 'Yes' counts as a pass.
+          passedWeight += w;
         }
       });
     });
 
     if (isCriticalFailed) return 0;
-
-    return Math.max(0, 100 - totalDeductions);
+    if (totalWeight === 0) return 100;
+    return Math.max(0, Math.round((passedWeight / totalWeight) * 100));
   };
 
   // Save the current form as a draft without submitting / scoring.

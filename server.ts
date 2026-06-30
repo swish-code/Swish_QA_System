@@ -369,6 +369,209 @@ async function startServer() {
       console.error('Brand list migration failed:', err);
     }
 
+    // ----------------------------------------------------------------
+    // QA Scorecards v1 — seed the per-call-type attribute lists from
+    // the official QA Manual. Idempotent via a marker row.
+    //
+    // Each attribute is stored ONCE in form_settings; its JSON value
+    // carries:
+    //   call_types        — array of call_type values it applies to
+    //   weights_by_type   — { 'New Order': 7, 'Inquiry': 8, ... }
+    //   critical          — Leads-to-Zero flag (from Master Dictionary)
+    //   category          — CTC / CTB / CTS / NON
+    //   section           — kept = 'evaluation_criteria' (single bucket)
+    //
+    // The frontend filters by formData.call_type and reads
+    // weights_by_type[selected_call_type] as the live weight.
+    // ----------------------------------------------------------------
+    try {
+      const SCORECARD_MARKER = 'scorecards_v1_manual_2026_07';
+      const marker = await db.prepare(
+        "SELECT id FROM form_settings WHERE field_type = '_meta' AND value = ?"
+      ).get(SCORECARD_MARKER) as any;
+
+      if (!marker) {
+        // 1. Make sure all five call types exist as form_settings rows.
+        const REQUIRED_CALL_TYPES = ['New Order', 'Inquiry', 'Follow Up', 'Complaints', 'Outbound'];
+        for (const ct of REQUIRED_CALL_TYPES) {
+          const exists = await db.prepare(
+            "SELECT id FROM form_settings WHERE field_type = 'call_type' AND value = ?"
+          ).get(ct) as any;
+          if (exists) {
+            await db.prepare("UPDATE form_settings SET is_active = 1 WHERE id = ?").run(exists.id);
+          } else {
+            await db.prepare(
+              "INSERT INTO form_settings (field_type, label_en, label_ar, value, is_active, sort_order) VALUES ('call_type', ?, ?, ?, 1, 0)"
+            ).run(ct, ct, ct);
+          }
+        }
+
+        // 2. Ensure a single "Evaluation Criteria" section exists and
+        //    deactivate any other eval_sections so the new questions
+        //    don't get filtered out by section.
+        await db.prepare("UPDATE form_settings SET is_active = 0 WHERE field_type = 'eval_section'").run();
+        const sectionExists = await db.prepare(
+          "SELECT id FROM form_settings WHERE field_type = 'eval_section' AND value = 'evaluation_criteria'"
+        ).get() as any;
+        if (sectionExists) {
+          await db.prepare("UPDATE form_settings SET label_en = ?, is_active = 1, sort_order = 0 WHERE id = ?")
+            .run('Evaluation Criteria', sectionExists.id);
+        } else {
+          await db.prepare(
+            "INSERT INTO form_settings (field_type, label_en, label_ar, value, is_active, sort_order) VALUES ('eval_section', 'Evaluation Criteria', 'معايير التقييم', 'evaluation_criteria', 1, 0)"
+          ).run();
+        }
+
+        // 3. Deactivate existing eval_questions so only the manual's
+        //    canonical attributes show up going forward.
+        await db.prepare("UPDATE form_settings SET is_active = 0 WHERE field_type = 'eval_question'").run();
+
+        // 4. Manual scorecards — { attribute → { call_type → weight } }.
+        const SCORECARDS: Record<string, { weight: number; category: string }[] & { [k: string]: any }> = {} as any;
+        // Helper: register an attribute for a call type.
+        const M: Record<string, Record<string, { weight: number; category: string; critical: boolean }>> = {};
+        const reg = (attr: string, callType: string, weight: number, category: string, critical: boolean) => {
+          if (!M[attr]) M[attr] = {};
+          M[attr][callType] = { weight, category, critical };
+        };
+
+        // From the manual — Leads-to-Zero attributes (case-sensitive match by name)
+        const LTZ = new Set([
+          'Professional Tone', 'Menu Knowledge', 'Customer Verification',
+          'Information Accuracy', 'Policy Compliance', 'Complaint Documentation',
+          'FCR & Escalation',
+        ]);
+        const isLTZ = (name: string) => LTZ.has(name);
+
+        // ---- New Order ----
+        const NO = 'New Order';
+        reg('Opening', NO, 4, 'NON', isLTZ('Opening'));
+        reg('Active Listening', NO, 7, 'CTC', isLTZ('Active Listening'));
+        reg('Professional Tone', NO, 8, 'CTC', isLTZ('Professional Tone'));
+        reg('Menu Knowledge', NO, 7, 'CTS', isLTZ('Menu Knowledge'));
+        reg('System Navigation', NO, 5, 'CTS', isLTZ('System Navigation'));
+        reg('Upselling', NO, 5, 'CTB', isLTZ('Upselling'));
+        reg('Customer Verification', NO, 10, 'CTS', isLTZ('Customer Verification'));
+        reg('Order Confirmation', NO, 10, 'CTS', isLTZ('Order Confirmation'));
+        reg('Empathy', NO, 5, 'CTC', isLTZ('Empathy'));
+        reg('Skill of Language', NO, 5, 'CTC', isLTZ('Skill of Language'));
+        reg('SOP Compliance', NO, 7, 'CTB', isLTZ('SOP Compliance'));
+        reg('Policy Compliance', NO, 7, 'CTS', isLTZ('Policy Compliance'));
+        reg('Hold Management', NO, 4, 'CTC', isLTZ('Hold Management'));
+        reg('Time Management', NO, 5, 'CTC', isLTZ('Time Management'));
+        reg('Closing', NO, 6, 'CTC', isLTZ('Closing'));
+        reg('Handling Special Requests', NO, 5, 'CTS', isLTZ('Handling Special Requests'));
+
+        // ---- Inquiry ----
+        const IN = 'Inquiry';
+        reg('Opening', IN, 4, 'NON', isLTZ('Opening'));
+        reg('Active Listening', IN, 7, 'CTC', isLTZ('Active Listening'));
+        reg('Professional Tone', IN, 8, 'CTC', isLTZ('Professional Tone'));
+        reg('Understanding Customer Need', IN, 8, 'CTS', isLTZ('Understanding Customer Need'));
+        reg('Information Accuracy', IN, 8, 'CTS', isLTZ('Information Accuracy'));
+        reg('Documentation', IN, 4, 'CTB', isLTZ('Documentation'));
+        reg('Menu Knowledge', IN, 8, 'CTS', isLTZ('Menu Knowledge'));
+        reg('System Navigation', IN, 8, 'CTS', isLTZ('System Navigation'));
+        reg('Policy Compliance', IN, 8, 'CTS', isLTZ('Policy Compliance'));
+        reg('Skill of Language', IN, 5, 'CTC', isLTZ('Skill of Language'));
+        reg('Explanation Clarity', IN, 8, 'CTC', isLTZ('Explanation Clarity'));
+        reg('Empathy', IN, 5, 'CTC', isLTZ('Empathy'));
+        reg('Handling Skills', IN, 4, 'CTC', isLTZ('Handling Skills'));
+        reg('Hold Management', IN, 4, 'CTC', isLTZ('Hold Management'));
+        reg('Time Management', IN, 5, 'CTC', isLTZ('Time Management'));
+        reg('Closing', IN, 6, 'CTC', isLTZ('Closing'));
+
+        // ---- Follow Up ----
+        const FU = 'Follow Up';
+        reg('Opening', FU, 4, 'NON', isLTZ('Opening'));
+        reg('Active Listening', FU, 7, 'CTC', isLTZ('Active Listening'));
+        reg('Professional Tone', FU, 8, 'CTC', isLTZ('Professional Tone'));
+        reg('Customer Verification', FU, 10, 'CTS', isLTZ('Customer Verification'));
+        reg('Order Lookup Accuracy', FU, 8, 'CTS', isLTZ('Order Lookup Accuracy'));
+        reg('Information Accuracy', FU, 10, 'CTS', isLTZ('Information Accuracy'));
+        reg('Status Of Order', FU, 5, 'CTC', isLTZ('Status Of Order'));
+        reg('Ownership', FU, 8, 'CTS', isLTZ('Ownership'));
+        reg('Empathy', FU, 5, 'CTC', isLTZ('Empathy'));
+        reg('Handling Skills', FU, 4, 'CTC', isLTZ('Handling Skills'));
+        reg('Next Step Clarity', FU, 3, 'CTC', isLTZ('Next Step Clarity'));
+        reg('Explanation Clarity', FU, 8, 'CTC', isLTZ('Explanation Clarity'));
+        reg('Time Management', FU, 5, 'CTC', isLTZ('Time Management'));
+        reg('Hold Management', FU, 4, 'CTC', isLTZ('Hold Management'));
+        reg('Closing', FU, 6, 'CTC', isLTZ('Closing'));
+        reg('Skill of Language', FU, 5, 'CTC', isLTZ('Skill of Language'));
+
+        // ---- Complaints ----
+        const CO = 'Complaints';
+        reg('Opening', CO, 4, 'NON', isLTZ('Opening'));
+        reg('Active Listening', CO, 7, 'CTC', isLTZ('Active Listening'));
+        reg('Empathy', CO, 6, 'CTC', isLTZ('Empathy'));
+        reg('Skill of Language', CO, 6, 'CTC', isLTZ('Skill of Language'));
+        reg('Handling Skills', CO, 6, 'CTC', isLTZ('Handling Skills'));
+        reg('Explanation Clarity', CO, 8, 'CTC', isLTZ('Explanation Clarity'));
+        reg('SOP Compliance', CO, 10, 'CTS', isLTZ('SOP Compliance'));
+        reg('Complaint Documentation', CO, 7, 'CTB', isLTZ('Complaint Documentation'));
+        reg('FCR & Escalation', CO, 10, 'CTS', isLTZ('FCR & Escalation'));
+        reg('Next Step Clarity', CO, 8, 'CTC', isLTZ('Next Step Clarity'));
+        reg('Ownership', CO, 8, 'CTS', isLTZ('Ownership'));
+        reg('Professional Tone', CO, 8, 'CTC', isLTZ('Professional Tone'));
+        reg('Calm Under Pressure', CO, 6, 'CTC', isLTZ('Calm Under Pressure'));
+        reg('Closing', CO, 6, 'CTC', isLTZ('Closing'));
+
+        // ---- Outbound ----
+        const OU = 'Outbound';
+        reg('Opening & Introduction', OU, 5, 'NON', isLTZ('Opening & Introduction'));
+        reg('Purpose of Call', OU, 10, 'CTS', isLTZ('Purpose of Call'));
+        reg('Active Listening', OU, 7, 'CTC', isLTZ('Active Listening'));
+        reg('Customer Verification', OU, 10, 'CTS', isLTZ('Customer Verification'));
+        reg('Information Accuracy', OU, 10, 'CTS', isLTZ('Information Accuracy'));
+        reg('Customer Needs Assessment', OU, 8, 'CTS', isLTZ('Customer Needs Assessment'));
+        reg('Objection Handling', OU, 8, 'CTC', isLTZ('Objection Handling'));
+        reg('Policy Compliance', OU, 8, 'CTB', isLTZ('Policy Compliance'));
+        reg('Next Step Clarity', OU, 5, 'CTC', isLTZ('Next Step Clarity'));
+        reg('Professional Tone', OU, 8, 'CTC', isLTZ('Professional Tone'));
+        reg('Time Management', OU, 5, 'CTC', isLTZ('Time Management'));
+        reg('Hold Management', OU, 5, 'CTC', isLTZ('Hold Management'));
+        reg('Closing', OU, 6, 'CTC', isLTZ('Closing'));
+        reg('Empathy', OU, 5, 'CTC', isLTZ('Empathy'));
+
+        // 5. Insert one row per unique attribute.
+        let sortOrder = 0;
+        for (const [attr, byType] of Object.entries(M)) {
+          const call_types = Object.keys(byType);
+          const weights_by_type: Record<string, number> = {};
+          let category = 'NON';
+          let critical = false;
+          for (const ct of call_types) {
+            weights_by_type[ct] = byType[ct].weight;
+            category = byType[ct].category;
+            critical = critical || byType[ct].critical;
+          }
+          // legacy "weight" field gets the highest variant so summing
+          // doesn't underflow if any consumer ignores weights_by_type.
+          const legacyWeight = Math.max(...Object.values(weights_by_type));
+          const value = JSON.stringify({
+            section: 'evaluation_criteria',
+            weight: legacyWeight,
+            critical,
+            category,
+            call_types,
+            weights_by_type,
+          });
+          await db.prepare(
+            "INSERT INTO form_settings (field_type, label_en, label_ar, value, is_active, sort_order) VALUES ('eval_question', ?, ?, ?, 1, ?)"
+          ).run(attr, attr, value, sortOrder++);
+        }
+
+        // 6. Stamp the marker so the migration is idempotent across restarts.
+        await db.prepare(
+          "INSERT INTO form_settings (field_type, label_en, value, is_active, sort_order) VALUES ('_meta', 'scorecards v1 from QA Manual applied', ?, 0, 0)"
+        ).run(SCORECARD_MARKER);
+        console.log(`Scorecards v1 seeded (${SCORECARD_MARKER})`);
+      }
+    } catch (err) {
+      console.error('Scorecards v1 migration failed:', err);
+    }
+
     // Seed initial form settings if empty or missing evaluation criteria
     try {
       const settingsCount = (await db.prepare("SELECT COUNT(*) as count FROM form_settings").get() as any).count;
