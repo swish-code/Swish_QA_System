@@ -413,17 +413,25 @@ export default function EvaluationForm() {
   };
 
   const calculateScore = () => {
-    // Hard override: QA explicitly marked the call as a critical failure.
+    // Hard override: QA explicitly marked the call as a critical failure
+    // via the "Mark as Critical" button. That's the only path to 0.
     if (formData.force_zero_score) return 0;
 
     // Per the QA Manual:
     //   Final Score = Σ(weights of passed attributes) / Σ(all weights) × 100
+    //
+    // Failing an attribute flagged CRITICAL no longer auto-zeros the call.
+    // Critical attributes still carry their full weight as a deduction
+    // (so failing FCR & Escalation costs you 10 points, not 100), but
+    // turning a single toggle off shouldn't wipe the entire score — the
+    // QA can use "Mark as Critical" explicitly when a true Leads-to-Zero
+    // violation occurs.
+    //
     // N/A responses are excluded from BOTH numerator and denominator so
     // they don't pull the score down for cases where an attribute simply
     // doesn't apply to this call.
     let totalWeight = 0;
     let passedWeight = 0;
-    let isCriticalFailed = false;
 
     formStructure.forEach(section => {
       section.items.forEach((item: any) => {
@@ -432,17 +440,13 @@ export default function EvaluationForm() {
 
         const w = Number(item.weight) || 0;
         totalWeight += w;
-
-        if (response === 'No') {
-          if (item.critical) isCriticalFailed = true;
-        } else {
+        if (response !== 'No') {
           // 'Yes' counts as a pass.
           passedWeight += w;
         }
       });
     });
 
-    if (isCriticalFailed) return 0;
     if (totalWeight === 0) return 100;
     return Math.max(0, Math.round((passedWeight / totalWeight) * 100));
   };
