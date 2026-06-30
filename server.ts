@@ -2992,6 +2992,20 @@ async function startServer() {
         
         const criticalFailures = evals.filter(e => e.critical_failure === 1).length;
 
+        // Escalation breakdown (for the dashboard "Escalations" card).
+        // Every 'Quality Approved' / 'Rejected by Quality' row was first escalated
+        // by a TL, so the total escalated count is the union of the three states.
+        const escalationStats = {
+          escalated: evals.filter(e =>
+            e.status === 'Escalated' ||
+            e.status === 'Quality Approved' ||
+            e.status === 'Rejected by Quality'
+          ).length,
+          pendingQuality: evals.filter(e => e.status === 'Escalated').length,
+          qualityApproved: evals.filter(e => e.status === 'Quality Approved').length,
+          qualityRejected: evals.filter(e => e.status === 'Rejected by Quality').length,
+        };
+
         // If it's an agent, topPerformers might not make sense or they see their own history
         // Let's keep top performers for supervisors/TLs, and for agents we show something else
         let topPerformers = [];
@@ -3042,7 +3056,8 @@ async function startServer() {
           criticalFailures,
           activeAgents: role === 'agent' ? 1 : agents.length,
           topPerformers,
-          painPoints: personalPainPoints
+          painPoints: personalPainPoints,
+          escalations: escalationStats
         });
       } catch (e: any) {
         res.status(500).json({ error: e.message });

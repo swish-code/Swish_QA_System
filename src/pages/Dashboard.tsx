@@ -15,7 +15,10 @@ import {
   ArrowUpRight,
   Clock,
   ArrowRightLeft,
-  Eye
+  Eye,
+  CheckCircle2,
+  XCircle,
+  Hourglass
 } from 'lucide-react';
 import { 
   AreaChart, 
@@ -222,6 +225,67 @@ export default function Dashboard() {
       </div>
 
 
+
+      {/* Escalations overview — calls the Team Leader escalated, and how Quality
+          responded (approved / rejected / still pending). Relevant to everyone
+          who handles the review workflow; hidden from agents. */}
+      {user?.role !== 'agent' && (
+        <div className="glass-card">
+          <div className="flex items-center justify-between mb-8">
+            <div className="flex items-center gap-2">
+              <ArrowRightLeft className="text-indigo-500 dark:text-indigo-400" size={18} />
+              <div>
+                <h3 className="text-lg font-medium text-zinc-900 dark:text-white">Escalations</h3>
+                <p className="text-xs text-zinc-600 dark:text-zinc-500 font-bold uppercase tracking-widest mt-0.5">Leader escalations &amp; Quality response</p>
+              </div>
+            </div>
+            <button
+              onClick={() => navigate('/escalations')}
+              className="text-xs font-bold text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 transition-colors flex items-center gap-1 uppercase tracking-widest"
+            >
+              View All <ArrowUpRight size={14} />
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            {/* Total escalated by the TL */}
+            <div className="p-4 sm:p-5 bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-2xl">
+              <div className="flex items-center gap-2 mb-3">
+                <ArrowRightLeft size={16} className="text-indigo-500 dark:text-indigo-400" />
+                <p className="text-[10px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-widest">Escalated by TL</p>
+              </div>
+              <p className="text-3xl font-light text-zinc-900 dark:text-white">{stats?.escalations?.escalated ?? 0}</p>
+            </div>
+
+            {/* Approved by Quality */}
+            <div className="p-4 sm:p-5 bg-emerald-50/60 dark:bg-emerald-500/5 border border-emerald-200 dark:border-emerald-500/20 rounded-2xl">
+              <div className="flex items-center gap-2 mb-3">
+                <CheckCircle2 size={16} className="text-emerald-600 dark:text-emerald-400" />
+                <p className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-widest">Quality Approved</p>
+              </div>
+              <p className="text-3xl font-light text-emerald-700 dark:text-emerald-400">{stats?.escalations?.qualityApproved ?? 0}</p>
+            </div>
+
+            {/* Rejected by Quality */}
+            <div className="p-4 sm:p-5 bg-rose-50/60 dark:bg-rose-500/5 border border-rose-200 dark:border-rose-500/20 rounded-2xl">
+              <div className="flex items-center gap-2 mb-3">
+                <XCircle size={16} className="text-rose-600 dark:text-rose-400" />
+                <p className="text-[10px] font-bold text-rose-700 dark:text-rose-400 uppercase tracking-widest">Quality Rejected</p>
+              </div>
+              <p className="text-3xl font-light text-rose-700 dark:text-rose-400">{stats?.escalations?.qualityRejected ?? 0}</p>
+            </div>
+
+            {/* Still pending a Quality response */}
+            <div className="p-4 sm:p-5 bg-amber-50/60 dark:bg-amber-500/5 border border-amber-200 dark:border-amber-500/20 rounded-2xl">
+              <div className="flex items-center gap-2 mb-3">
+                <Hourglass size={16} className="text-amber-600 dark:text-amber-400" />
+                <p className="text-[10px] font-bold text-amber-700 dark:text-amber-400 uppercase tracking-widest">Pending Quality</p>
+              </div>
+              <p className="text-3xl font-light text-amber-700 dark:text-amber-400">{stats?.escalations?.pendingQuality ?? 0}</p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* QA Productivity — calls registered per Quality user.
           Only QAs (their own count) and Supervisors (whole team) see this.
