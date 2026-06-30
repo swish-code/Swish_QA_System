@@ -3006,6 +3006,44 @@ async function startServer() {
           qualityRejected: evals.filter(e => e.status === 'Rejected by Quality').length,
         };
 
+        // Per-actor breakdown — which TL escalated how many calls, and which QA
+        // approved / rejected how many. Read from escalation_logs (the authoritative
+        // record of who did what), restricted to the same scope-filtered
+        // evaluations above so each role only sees its own numbers.
+        let escalationsByTL: any[] = [];
+        let responsesByQA: any[] = [];
+        const scopedEvalIds = evals.map(e => e.id);
+        if (scopedEvalIds.length > 0) {
+          const ph = scopedEvalIds.map(() => '?').join(',');
+          const logRows = await db.prepare(
+            `SELECT el.user_id, el.role, el.action, u.display_name AS name, COUNT(*) AS cnt
+               FROM escalation_logs el
+               JOIN users u ON el.user_id = u.id
+              WHERE el.evaluation_id IN (${ph})
+              GROUP BY el.user_id, el.role, el.action, u.display_name`
+          ).all(...scopedEvalIds) as any[];
+
+          const tlMap: { [id: number]: { id: number; name: string; escalated: number } } = {};
+          const qaMap: { [id: number]: { id: number; name: string; approved: number; rejected: number } } = {};
+
+          logRows.forEach(r => {
+            const cnt = Number(r.cnt) || 0;
+            if (r.role === 'tl' && r.action === 'escalated') {
+              if (!tlMap[r.user_id]) tlMap[r.user_id] = { id: r.user_id, name: r.name, escalated: 0 };
+              tlMap[r.user_id].escalated += cnt;
+            } else if (r.role === 'qa' && (r.action === 'approved' || r.action === 'rejected')) {
+              if (!qaMap[r.user_id]) qaMap[r.user_id] = { id: r.user_id, name: r.name, approved: 0, rejected: 0 };
+              if (r.action === 'approved') qaMap[r.user_id].approved += cnt;
+              else qaMap[r.user_id].rejected += cnt;
+            }
+          });
+
+          escalationsByTL = Object.values(tlMap).sort((a, b) => b.escalated - a.escalated);
+          responsesByQA = Object.values(qaMap).sort(
+            (a, b) => (b.approved + b.rejected) - (a.approved + a.rejected)
+          );
+        }
+
         // If it's an agent, topPerformers might not make sense or they see their own history
         // Let's keep top performers for supervisors/TLs, and for agents we show something else
         let topPerformers = [];
@@ -3057,7 +3095,9 @@ async function startServer() {
           activeAgents: role === 'agent' ? 1 : agents.length,
           topPerformers,
           painPoints: personalPainPoints,
-          escalations: escalationStats
+          escalations: escalationStats,
+          escalationsByTL,
+          responsesByQA
         });
       } catch (e: any) {
         res.status(500).json({ error: e.message });

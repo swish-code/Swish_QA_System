@@ -284,6 +284,58 @@ export default function Dashboard() {
               <p className="text-3xl font-light text-amber-700 dark:text-amber-400">{stats?.escalations?.pendingQuality ?? 0}</p>
             </div>
           </div>
+
+          {/* Per-person breakdown: each TL's escalations, each QA's approve/reject */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-8">
+            {/* By Team Leader */}
+            <div>
+              <div className="flex items-center gap-2 mb-4">
+                <ArrowRightLeft size={14} className="text-indigo-500 dark:text-indigo-400" />
+                <h4 className="text-[11px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-widest">Escalations by Team Leader</h4>
+              </div>
+              <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                {(stats?.escalationsByTL?.length ?? 0) > 0 ? (
+                  stats.escalationsByTL.map((tl: any) => (
+                    <div key={tl.id} className="flex items-center justify-between py-2.5 px-3 bg-white dark:bg-zinc-950 border border-zinc-100 dark:border-zinc-800 rounded-xl">
+                      <span className="text-sm font-medium text-zinc-700 dark:text-zinc-200 truncate">{tl.name}</span>
+                      <span className="text-sm font-bold text-indigo-600 dark:text-indigo-400 shrink-0 ml-3">
+                        {tl.escalated} <span className="text-[10px] font-bold text-zinc-400 dark:text-zinc-600 uppercase tracking-widest">calls</span>
+                      </span>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-[10px] font-bold text-zinc-400 dark:text-zinc-700 uppercase tracking-widest text-center py-8">No escalations yet</p>
+                )}
+              </div>
+            </div>
+
+            {/* By Quality team member */}
+            <div>
+              <div className="flex items-center gap-2 mb-4">
+                <CheckCircle2 size={14} className="text-emerald-500 dark:text-emerald-400" />
+                <h4 className="text-[11px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-widest">Quality Responses by Member</h4>
+              </div>
+              <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                {(stats?.responsesByQA?.length ?? 0) > 0 ? (
+                  stats.responsesByQA.map((qa: any) => (
+                    <div key={qa.id} className="flex items-center justify-between py-2.5 px-3 bg-white dark:bg-zinc-950 border border-zinc-100 dark:border-zinc-800 rounded-xl">
+                      <span className="text-sm font-medium text-zinc-700 dark:text-zinc-200 truncate">{qa.name}</span>
+                      <span className="flex items-center gap-3 shrink-0 ml-3">
+                        <span className="flex items-center gap-1 text-sm font-bold text-emerald-600 dark:text-emerald-400" title="Approved">
+                          <CheckCircle2 size={13} /> {qa.approved}
+                        </span>
+                        <span className="flex items-center gap-1 text-sm font-bold text-rose-600 dark:text-rose-400" title="Rejected">
+                          <XCircle size={13} /> {qa.rejected}
+                        </span>
+                      </span>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-[10px] font-bold text-zinc-400 dark:text-zinc-700 uppercase tracking-widest text-center py-8">No responses yet</p>
+                )}
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
