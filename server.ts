@@ -754,6 +754,57 @@ async function startServer() {
       console.error('Bulk users seed migration failed:', err);
     }
 
+    // ----------------------------------------------------------------
+    // One-shot reset — clears every test evaluation and everything that
+    // hangs off them so the production numbers start clean. Gated by a
+    // marker row in form_settings so subsequent deploys do nothing.
+    //
+    // Touched tables (all wiped):
+    //   evaluations                 (the calls themselves)
+    //   escalation_logs             (per-evaluation timeline)
+    //   coaching_requests           (TL → agent coaching workflow)
+    //   coaching_sessions           (legacy coaching table)
+    //   accuracy_cases              (TL ↔ QA dispute cases)
+    //   evaluation_drafts           (in-progress drafts)
+    //   qa_kpi_day_overrides        (per-day Admin overrides)
+    //   notifications WHERE evaluation_id IS NOT NULL  (linked alerts)
+    //
+    // Preserved: users, user_sessions, attendance_records, user_leaves,
+    // audit_logs, form_settings, qa_kpi_config, tl_kpi_config.
+    // ----------------------------------------------------------------
+    try {
+      const RESET_MARKER = 'reset_test_calls_2026_07';
+      const already = await db.prepare(
+        "SELECT id FROM form_settings WHERE field_type = '_meta' AND value = ?"
+      ).get(RESET_MARKER) as any;
+
+      if (!already) {
+        const tables = [
+          'qa_kpi_day_overrides',
+          'accuracy_cases',
+          'coaching_requests',
+          'coaching_sessions',
+          'escalation_logs',
+          'evaluation_drafts',
+          'evaluations',
+        ];
+        for (const t of tables) {
+          try { await db.prepare(`DELETE FROM ${t}`).run(); } catch (e) {
+            console.error(`Failed to clear ${t}:`, e);
+          }
+        }
+        // Notifications: keep system messages, drop only the call-bound ones.
+        try { await db.prepare("DELETE FROM notifications WHERE evaluation_id IS NOT NULL").run(); } catch {}
+
+        await db.prepare(
+          "INSERT INTO form_settings (field_type, label_en, value, is_active, sort_order) VALUES ('_meta', 'test calls reset', ?, 0, 0)"
+        ).run(RESET_MARKER);
+        console.log(`Test evaluation data wiped (${RESET_MARKER})`);
+      }
+    } catch (err) {
+      console.error('Test-calls reset migration failed:', err);
+    }
+
     // Seed initial form settings if empty or missing evaluation criteria
     try {
       const settingsCount = (await db.prepare("SELECT COUNT(*) as count FROM form_settings").get() as any).count;
