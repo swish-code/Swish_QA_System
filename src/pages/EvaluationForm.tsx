@@ -1010,7 +1010,9 @@ export default function EvaluationForm() {
           <div className="space-y-3">
             <label className="text-[9px] font-black text-zinc-400 dark:text-zinc-600 uppercase tracking-widest block">Evaluator</label>
             <div className="px-4 py-3 bg-white dark:bg-zinc-900/50 border border-zinc-100 dark:border-zinc-800 rounded-xl text-xs text-zinc-500 dark:text-zinc-400">
-              {user?.display_name || 'System Evaluator'}
+              {/* Existing call → the QA who actually created it; new call → the
+                  current user creating it. */}
+              {(id ? formData.qa_name : user?.display_name) || 'System Evaluator'}
             </div>
           </div>
           <div className="space-y-3">
