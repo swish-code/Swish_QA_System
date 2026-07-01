@@ -71,16 +71,19 @@ export default function TeamPerformance() {
             <h3 className="text-lg font-medium text-zinc-900 dark:text-white">Comparative Scorecard</h3>
             <p className="text-[10px] text-zinc-400 dark:text-zinc-500 font-bold uppercase tracking-widest mt-1">Individual Performance Distribution</p>
           </div>
-          <div className="h-[300px]">
+          {/* Scroll container with a fixed viewport; the inner chart grows with
+              the roster so 37 agents don't overlap into an unreadable smear. */}
+          <div className="h-[360px] overflow-y-auto pr-1">
+            <div style={{ height: Math.max(300, (stats?.teamPerformance?.length || 0) * 26) }}>
              <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={stats?.teamPerformance} layout="vertical" margin={{ left: -30 }}>
+              <BarChart data={stats?.teamPerformance} layout="vertical" margin={{ top: 4, right: 16, bottom: 4, left: 8 }}>
                 <XAxis type="number" hide domain={[0, 100]} />
-                <YAxis dataKey="name" type="category" stroke="#a1a1aa" fontSize={10} tickLine={false} axisLine={false} />
-                <Tooltip 
+                <YAxis dataKey="name" type="category" width={110} interval={0} stroke="#a1a1aa" fontSize={10} tickLine={false} axisLine={false} />
+                <Tooltip
                   cursor={{ fill: 'currentColor', opacity: 0.05 }}
-                  contentStyle={{ 
-                    backgroundColor: 'var(--tooltip-bg, #ffffff)', 
-                    border: '1px solid var(--border-color, #e2e8f0)', 
+                  contentStyle={{
+                    backgroundColor: 'var(--tooltip-bg, #ffffff)',
+                    border: '1px solid var(--border-color, #e2e8f0)',
                     borderRadius: '12px',
                     color: 'var(--tooltip-text, #18181b)'
                   }}
@@ -92,6 +95,7 @@ export default function TeamPerformance() {
                 </Bar>
               </BarChart>
             </ResponsiveContainer>
+            </div>
           </div>
         </div>
 
