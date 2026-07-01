@@ -3681,11 +3681,16 @@ async function startServer() {
 
       // Always need the per-day actual counts now — they're the base
       // for both the leaderboard total and the chart. Cheap query.
+      // Grouped by the registration day (created_at), NOT the typed call
+      // date, so a call counts toward the day the QA actually logged it —
+      // consistent with the QA Productivity card. ::date::text keeps the
+      // YYYY-MM-DD comparison text-based (created_at::date is a DATE type
+      // and params bind as text).
       const dailyRows = await db.prepare(
-        `SELECT date, COUNT(*) AS c FROM evaluations
-         WHERE qa_id = ? AND date >= ? AND date <= ?
-         GROUP BY date
-         ORDER BY date ASC`
+        `SELECT created_at::date::text AS date, COUNT(*) AS c FROM evaluations
+         WHERE qa_id = ? AND created_at::date::text >= ? AND created_at::date::text <= ?
+         GROUP BY created_at::date::text
+         ORDER BY created_at::date::text ASC`
       ).all(qaId, monthStart, monthEnd) as any[];
       const actualMap = new Map<string, number>(
         dailyRows.map((r: any) => [r.date, Number(r.c)])
