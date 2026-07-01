@@ -52,6 +52,16 @@ const CRITICAL_FAILURE_REASONS = [
   'Unapproved Commitment',
 ];
 
+// Error-category badge tones — mirror the definitions shown on the Info page
+// (CTC / CTB / CTS / NON) so evaluators can see each attribute's category
+// while scoring the call.
+const CATEGORY_TONES: Record<string, string> = {
+  CTC: 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/30',
+  CTB: 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30',
+  CTS: 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/30',
+  NON: 'bg-zinc-500/10 text-zinc-600 dark:text-zinc-400 border-zinc-500/30',
+};
+
 export default function EvaluationForm() {
   const { user } = useAuth();
   const { id } = useParams();
@@ -1105,6 +1115,14 @@ export default function EvaluationForm() {
                       <span className="px-1.5 py-0.5 rounded-md bg-rose-500/5 dark:bg-rose-500/10 border border-rose-500/10 text-[8px] font-black text-rose-500 dark:text-rose-400">
                         -{item.weight}%
                       </span>
+                      {item.category && (
+                        <span
+                          className={`px-1.5 py-0.5 rounded-md border text-[8px] font-black uppercase tracking-wider ${CATEGORY_TONES[String(item.category).toUpperCase()] || CATEGORY_TONES.NON}`}
+                          title="Error category — see the Info page for what each code means"
+                        >
+                          {item.category}
+                        </span>
+                      )}
                       {item.critical && (
                         <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-rose-500/10 border border-rose-500/10 text-[8px] font-black text-rose-500">
                           <AlertCircle size={10} /> CRITICAL
