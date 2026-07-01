@@ -1527,7 +1527,7 @@ async function startServer() {
 
     // Evaluations
     app.get("/api/evaluations", async (req, res) => {
-      const { user_id, role, agent_id, from_date, to_date, status, search, coaching_status, wow_only } = req.query;
+      const { user_id, role, agent_id, from_date, to_date, status, search, coaching_status, wow_only, score } = req.query;
       const page = parseInt(req.query.page as string) || 1;
       const limit = parseInt(req.query.limit as string) || 10;
       const offset = (page - 1) * limit;
@@ -1585,6 +1585,13 @@ async function startServer() {
       if (status && status !== 'all') {
         baseQuery += " AND e.status = ?";
         params.push(status);
+      }
+
+      // Score band filter — works alongside every other filter.
+      if (score === 'lt90') {
+        baseQuery += " AND e.final_score < 90";
+      } else if (score === 'gte90') {
+        baseQuery += " AND e.final_score >= 90";
       }
 
       if (from_date) {

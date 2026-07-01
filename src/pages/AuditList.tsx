@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
+import * as XLSX from 'xlsx';
 import CoachingRequestDialog from '../components/CoachingRequestDialog';
 import CoachingDetailsDialog from '../components/CoachingDetailsDialog';
 import { useAuth } from '../context/AuthContext';
@@ -26,7 +27,8 @@ import {
   Clock,
   Hourglass,
   Pencil,
-  History
+  History,
+  FileSpreadsheet
 } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Evaluation } from '../types';
@@ -54,8 +56,10 @@ export default function AuditList() {
   const [selectedAgent, setSelectedAgent] = useState(searchParams.get('agent_id') || 'all');
   const [statusFilter, setStatusFilter] = useState(searchParams.get('status') || 'all');
   const [coachingFilter, setCoachingFilter] = useState(searchParams.get('coaching_status') || 'all');
+  const [scoreFilter, setScoreFilter] = useState(searchParams.get('score') || 'all');
   const [startDate, setStartDate] = useState(searchParams.get('from_date') || '');
   const [endDate, setEndDate] = useState(searchParams.get('to_date') || '');
+  const [isExporting, setIsExporting] = useState(false);
 
   const [isLoading, setIsLoading] = useState(true);
   const [isChangingPage, setIsChangingPage] = useState(false);
@@ -291,6 +295,7 @@ export default function AuditList() {
       agent_id: selectedAgent,
       status: statusFilter,
       coaching_status: coachingFilter,
+      score: scoreFilter,
       from_date: startDate,
       to_date: endDate,
       search: searchTerm,
@@ -303,9 +308,51 @@ export default function AuditList() {
     setSelectedAgent('all');
     setStatusFilter('all');
     setCoachingFilter('all');
+    setScoreFilter('all');
     setStartDate('');
     setEndDate('');
     setSearchParams({});
+  };
+
+  // Export the current filtered result set (all pages, not just the visible
+  // one) to an .xlsx with the same columns as the table, in the same order.
+  const handleExport = async () => {
+    setIsExporting(true);
+    try {
+      const qp = new URLSearchParams(searchParams);
+      qp.set('user_id', user?.id?.toString() || '');
+      qp.set('role', user?.role || '');
+      qp.set('limit', '100000');
+      qp.set('page', '1');
+
+      const res = await fetch(`/api/evaluations?${qp.toString()}`);
+      if (!res.ok) throw new Error('Failed to fetch data for export');
+      const result = await res.json();
+      const data: Evaluation[] = result.data || [];
+
+      const rows = data.map((a: any) => ({
+        'Call #': a.id,
+        'Agent': a.agent_name || '',
+        'Agent #': a.agent_id,
+        'Brand': a.brand || '',
+        'Call Type': a.call_type || '',
+        'Date': a.date || '',
+        'Score': `${a.final_score}%`,
+        'Status': a.status || '',
+        'Coaching': a.coaching ? a.coaching.status : 'Not Coached',
+      }));
+
+      const ws = XLSX.utils.json_to_sheet(rows);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Quality Calls');
+      const stamp = new Date().toISOString().slice(0, 10);
+      XLSX.writeFile(wb, `quality-calls-${stamp}.xlsx`);
+    } catch (err) {
+      console.error(err);
+      alert('Export failed. Please try again.');
+    } finally {
+      setIsExporting(false);
+    }
   };
 
   const handlePageChange = (page: number) => {
@@ -350,7 +397,7 @@ export default function AuditList() {
             </div>
           </div>
 
-          <div className="flex gap-2 shrink-0">
+          <div className="flex gap-2 shrink-0 items-stretch">
             <div className="bg-zinc-50 dark:bg-zinc-900/50 border border-zinc-100 dark:border-zinc-800 px-3 sm:px-4 py-2 rounded-xl flex items-center gap-2 sm:gap-3">
               <p className="text-[9px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest leading-none">Total</p>
               <p className="text-base sm:text-lg font-black text-zinc-900 dark:text-white tracking-tighter leading-none">{pagination?.totalItems || 0}</p>
@@ -361,6 +408,15 @@ export default function AuditList() {
                 {averageScore}%
               </p>
             </div>
+            <button
+              onClick={handleExport}
+              disabled={isExporting || (pagination?.totalItems || 0) === 0}
+              className="bg-emerald-600 text-white px-3 sm:px-4 py-2 rounded-xl flex items-center gap-2 text-[10px] font-black uppercase tracking-widest shadow-lg shadow-emerald-500/20 hover:bg-emerald-500 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Export the current filtered results to Excel (.xlsx)"
+            >
+              <FileSpreadsheet size={14} />
+              <span className="hidden sm:inline">{isExporting ? 'Exporting…' : 'Export to Excel'}</span>
+            </button>
           </div>
         </div>
       </div>
@@ -369,7 +425,7 @@ export default function AuditList() {
       <div className="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-3 sm:p-4 shadow-sm">
         <div className="flex flex-col lg:flex-row gap-3 lg:items-end">
           {/* Filters Grid */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 sm:gap-3 flex-1">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-2 sm:gap-3 flex-1">
             {/* Agent Filter */}
             <div>
               <label className="text-[9px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest block mb-1 ml-1">Agent</label>
@@ -424,6 +480,23 @@ export default function AuditList() {
                   <option value="Sent to Agent">Sent to Agent</option>
                   <option value="Escalated">Escalated</option>
                   <option value="Reevaluated">Reevaluated</option>
+                </select>
+                <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 dark:text-zinc-600 pointer-events-none" size={12} />
+              </div>
+            </div>
+
+            {/* Score Filter */}
+            <div>
+              <label className="text-[9px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest block mb-1 ml-1">Score</label>
+              <div className="relative">
+                <select
+                  className="w-full bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg pl-3 pr-7 py-2 text-xs text-zinc-800 dark:text-zinc-100 outline-none focus:border-indigo-500 appearance-none cursor-pointer"
+                  value={scoreFilter}
+                  onChange={(e) => setScoreFilter(e.target.value)}
+                >
+                  <option value="all">All</option>
+                  <option value="lt90">Less than 90</option>
+                  <option value="gte90">90 or Above</option>
                 </select>
                 <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 dark:text-zinc-600 pointer-events-none" size={12} />
               </div>
