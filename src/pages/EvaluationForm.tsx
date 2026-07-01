@@ -1039,6 +1039,20 @@ export default function EvaluationForm() {
               ))}
             </select>
           </div>
+          {/* Registration time — recorded automatically by the system when the
+              call is logged. Distinct from Call Date (which the QA types and
+              may set to the actual call day). Read-only. */}
+          <div className="space-y-3">
+            <label className="text-[9px] font-black text-zinc-400 dark:text-zinc-600 uppercase tracking-widest block">Registered On</label>
+            <div className="w-full bg-white dark:bg-zinc-900/50 border border-zinc-100 dark:border-zinc-800 rounded-xl px-4 py-3 text-xs text-zinc-500 dark:text-zinc-400 flex items-center gap-2">
+              <Clock size={12} className="text-indigo-500 dark:text-emerald-500 shrink-0" />
+              <span className="truncate">
+                {formData.created_at
+                  ? new Date(formData.created_at).toLocaleString()
+                  : 'Set automatically on submit'}
+              </span>
+            </div>
+          </div>
         </div>
       </section>
 
