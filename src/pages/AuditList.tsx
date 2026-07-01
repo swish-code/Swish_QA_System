@@ -101,6 +101,10 @@ export default function AuditList() {
     !audit.agent_escalation_status
   ), [user]);
 
+  // The "Edited" badge + highlighted row are a QA/supervisor audit signal.
+  // Agents and Team Leaders should not see that a call was edited.
+  const showEditMarkers = user?.role !== 'agent' && user?.role !== 'tl';
+
   const submitAgentEscalation = async () => {
     if (!escalateTarget || !user?.id) return;
     setIsEscalating(true);
@@ -519,7 +523,7 @@ export default function AuditList() {
                     <tr
                       key={audit.id}
                       className={`group cursor-pointer ${isChangingPage ? 'opacity-30' : ''} ${
-                        audit.last_edited_at
+                        showEditMarkers && audit.last_edited_at
                           ? 'bg-indigo-50/70 dark:bg-indigo-500/10 hover:bg-indigo-100/70 dark:hover:bg-indigo-500/15'
                           : 'hover:bg-zinc-50 dark:hover:bg-zinc-800/20'
                       }`}
@@ -533,7 +537,7 @@ export default function AuditList() {
                         <div>
                           <p className="text-sm font-bold text-zinc-900 dark:text-white group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors uppercase tracking-tight">{audit.agent_name}</p>
                           <p className="text-[10px] font-black text-zinc-400 dark:text-zinc-600 uppercase tracking-widest mt-1">ID: #{audit.agent_id}</p>
-                          {audit.last_edited_at && (
+                          {showEditMarkers && audit.last_edited_at && (
                             <button
                               type="button"
                               onClick={(e) => { e.stopPropagation(); openEditHistory(audit); }}
