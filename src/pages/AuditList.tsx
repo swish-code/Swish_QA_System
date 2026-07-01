@@ -629,7 +629,7 @@ export default function AuditList() {
                          >
                            <Eye size={16} />
                          </button>
-                         {(user?.role === 'qa' || user?.role === 'supervisor') && (
+                         {(user?.role === 'supervisor' || (user?.role === 'qa' && Number(audit.qa_id) === Number(user?.id))) && (
                            <button
                              onClick={(e) => { e.stopPropagation(); navigate(`/evaluate/${audit.id}?edit=1`); }}
                              className="p-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400 hover:bg-amber-500 hover:text-white hover:border-amber-500 transition-all"

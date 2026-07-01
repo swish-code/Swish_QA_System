@@ -1752,6 +1752,16 @@ async function startServer() {
       // trail (who changed what, when). Skipped silently if the row vanished.
       const before = await db.prepare("SELECT * FROM evaluations WHERE id = ?").get(evaluation_id) as any;
 
+      // Authorization: a QA may only edit calls they created. Supervisors may
+      // edit any. Enforced here so the hidden pencil can't be bypassed by
+      // calling the API directly. Other flows (no editor_id) are unaffected.
+      if (editor_id && before) {
+        const editor = await db.prepare("SELECT role FROM users WHERE id = ?").get(editor_id) as any;
+        if (editor?.role === 'qa' && Number(before.qa_id) !== Number(editor_id)) {
+          return res.status(403).json({ error: "You can only edit calls you created." });
+        }
+      }
+
       const newStatus = status || 'completed';
       await db.prepare(`
         UPDATE evaluations

@@ -317,9 +317,14 @@ export default function EvaluationForm() {
     }
   };
 
-  // QA edit mode — opened via the pencil icon (?edit=1). Lets a QA / supervisor
-  // edit an existing call regardless of status; the save is change-tracked.
-  const isQaEdit = !!id && searchParams.get('edit') === '1' && (user?.role === 'qa' || user?.role === 'supervisor');
+  // QA edit mode — opened via the pencil icon (?edit=1). Lets a supervisor edit
+  // any call, but a QA only their own; the save is change-tracked. A QA who
+  // deep-links ?edit=1 to another QA's call stays read-only (and the server
+  // rejects the write anyway).
+  const isQaEdit = !!id && searchParams.get('edit') === '1' && (
+    user?.role === 'supervisor' ||
+    (user?.role === 'qa' && Number(formData.qa_id) === Number(user?.id))
+  );
 
   const isReadOnly = id && !(
     (formData.status === 'Escalated' && (user?.role === 'qa' || user?.role === 'supervisor')) ||
