@@ -204,6 +204,15 @@ async function startServer() {
     // blue row highlight) and point at the most recent editor.
     try { await db.exec("ALTER TABLE evaluations ADD COLUMN IF NOT EXISTS last_edited_at TIMESTAMP"); } catch(e) {}
     try { await db.exec("ALTER TABLE evaluations ADD COLUMN IF NOT EXISTS last_edited_by INTEGER"); } catch(e) {}
+
+    // Registration timestamp — when the QA actually logged the evaluation, as
+    // opposed to `date` (the call date the QA types, which may be earlier).
+    // Drives the "calls registered per QA" productivity card so a call logged
+    // today counts today regardless of the call date. No DEFAULT: new rows set
+    // it explicitly on INSERT; pre-existing rows are backfilled once from the
+    // call date below (idempotent — only touches NULLs).
+    try { await db.exec("ALTER TABLE evaluations ADD COLUMN IF NOT EXISTS created_at TIMESTAMP"); } catch(e) {}
+    try { await db.exec("UPDATE evaluations SET created_at = date::timestamp WHERE created_at IS NULL AND date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'"); } catch(e) {}
     await db.exec(`
       CREATE TABLE IF NOT EXISTS evaluation_edits (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1691,7 +1700,7 @@ async function startServer() {
       //   score <  90  → goes to TL only; Agent does NOT see it until cycle ends
       const status = final_score >= 90 ? 'Sent to Agent' : 'Pending Review';
 
-      const result = await db.prepare("INSERT INTO evaluations (date, agent_id, qa_id, brand, call_type, final_score, critical_failure, data, status, is_wow) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      const result = await db.prepare("INSERT INTO evaluations (date, agent_id, qa_id, brand, call_type, final_score, critical_failure, data, status, is_wow, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)")
         .run(date, agent_id, qa_id, brand, call_type, final_score, critical_failure ? 1 : 0, JSON.stringify(data), status, is_wow ? 1 : 0);
 
       const evaluation_id = result.lastInsertRowid;
@@ -3380,14 +3389,20 @@ async function startServer() {
         // for supervisors/TLs (otherwise the section quietly hides idle users).
         // The date filter is moved into the JOIN's ON clause so a date window
         // with zero matches still surfaces the user with count=0.
+        //
+        // Filter by created_at (when the call was actually registered) rather
+        // than the typed call date, so "calls registered today" reflects the
+        // QA's logging activity. created_at::date drops the time component so
+        // the whole day is included. All valid rows are backfilled at boot, so
+        // created_at is populated; only malformed-date legacy rows lack it.
         const dateJoinConds: string[] = ["e.qa_id = u.id"];
         const joinParams: any[] = [];
         if (start_date) {
-          dateJoinConds.push("e.date >= ?");
+          dateJoinConds.push("e.created_at::date >= ?");
           joinParams.push(start_date);
         }
         if (effectiveEnd) {
-          dateJoinConds.push("e.date <= ?");
+          dateJoinConds.push("e.created_at::date <= ?");
           joinParams.push(effectiveEnd);
         }
 
