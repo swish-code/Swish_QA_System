@@ -370,7 +370,12 @@ export default function EvaluationForm() {
     if (id) {
       const fetchEvaluation = async () => {
         try {
-          const eRes = await fetch(`/api/evaluations?user_id=${user?.id}&role=${user?.role}`);
+          // Pull a wide page so the evaluation is found regardless of how many
+          // exist — the default 10-row page silently dropped any call beyond
+          // the first page (loaded an empty form showing a false 100%). The
+          // list endpoint still applies all role/scope visibility rules, so a
+          // caller only ever finds an evaluation they're allowed to open.
+          const eRes = await fetch(`/api/evaluations?user_id=${user?.id}&role=${user?.role}&limit=100000&page=1`);
           if (!eRes.ok) throw new Error(`HTTP error! status: ${eRes.status}`);
           const result = await eRes.json();
           const eData = result.data || [];
