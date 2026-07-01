@@ -536,7 +536,7 @@ export default function AuditList() {
                         </div>
                         <div>
                           <p className="text-sm font-bold text-zinc-900 dark:text-white group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors uppercase tracking-tight">{audit.agent_name}</p>
-                          <p className="text-[10px] font-black text-zinc-400 dark:text-zinc-600 uppercase tracking-widest mt-1">ID: #{audit.agent_id}</p>
+                          <p className="text-[10px] font-black text-zinc-400 dark:text-zinc-600 uppercase tracking-widest mt-1">Call #{audit.id} · Agent #{audit.agent_id}</p>
                           {showEditMarkers && audit.last_edited_at && (
                             <button
                               type="button"
