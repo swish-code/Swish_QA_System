@@ -595,7 +595,24 @@ export default function EvaluationForm() {
         // Refresh the drafts badge — server marked the draft 'completed'.
         if (activeDraftId) notifyDraftsChanged();
         alert(`Evaluation ${isCreation ? 'submitted' : 'updated'} successfully! Final Score: ${score}%`);
-        navigate(isCreation ? '/' : '/audits');
+
+        // QA logging a NEW call: reset the form and stay so they can log the
+        // next call immediately, instead of bouncing to the dashboard. Edits
+        // and escalation reviews keep their existing navigation.
+        if (isCreation && user?.role === 'qa') {
+          setFormData({
+            ...buildEmptyForm(),
+            brand: formOptions.brand[0]?.value || '',
+            call_direction: formOptions.call_direction[0]?.value || '',
+            call_category: formOptions.call_category[0]?.value || '',
+            call_type: formOptions.call_type[0]?.value || 'New Order',
+          });
+          setActiveDraftId(null);
+          if (draftIdParam) navigate('/evaluate', { replace: true });
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        } else {
+          navigate(isCreation ? '/' : '/audits');
+        }
       }
     } catch (err) {
       console.error(err);
