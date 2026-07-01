@@ -3395,14 +3395,18 @@ async function startServer() {
         // QA's logging activity. created_at::date drops the time component so
         // the whole day is included. All valid rows are backfilled at boot, so
         // created_at is populated; only malformed-date legacy rows lack it.
+        // Cast the registration date to text ('YYYY-MM-DD') before comparing to
+        // the string params — created_at::date is a DATE type and the driver
+        // binds params as text, so a bare `date >= text` comparison errors.
+        // Lexicographic text comparison of YYYY-MM-DD equals chronological order.
         const dateJoinConds: string[] = ["e.qa_id = u.id"];
         const joinParams: any[] = [];
         if (start_date) {
-          dateJoinConds.push("e.created_at::date >= ?");
+          dateJoinConds.push("e.created_at::date::text >= ?");
           joinParams.push(start_date);
         }
         if (effectiveEnd) {
-          dateJoinConds.push("e.created_at::date <= ?");
+          dateJoinConds.push("e.created_at::date::text <= ?");
           joinParams.push(effectiveEnd);
         }
 
