@@ -6,6 +6,18 @@ import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import cors from "cors";
 
+// Safety net: many route handlers are async without a try/catch, so a transient
+// DB error (e.g. a dropped Postgres connection) would otherwise bubble up as an
+// unhandled rejection and terminate the whole server, 502-ing every user. Log
+// it and keep the process alive — the failed request just doesn't respond and
+// the client can retry, instead of the whole app going down.
+process.on("unhandledRejection", (reason: any) => {
+  console.error("[unhandledRejection]", reason?.message || reason);
+});
+process.on("uncaughtException", (err: any) => {
+  console.error("[uncaughtException]", err?.message || err);
+});
+
 // JWT signing secret. ALWAYS set JWT_SECRET in production — the fallback below
 // is only there so the dev server still boots on a fresh clone without env vars.
 const JWT_SECRET = process.env.JWT_SECRET || "super-secret-key-123";

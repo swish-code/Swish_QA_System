@@ -159,6 +159,22 @@ export function createDb(): PgDatabase {
   // Enable SSL whenever the URL looks remote (anything not localhost / 127.0.0.1).
   const isLocal = /@(localhost|127\.0\.0\.1)(:|\/|$)/.test(connectionString);
   const ssl = isLocal ? undefined : { rejectUnauthorized: false };
-  const pool = new Pool({ connectionString, ssl, max: 10 });
+  const pool = new Pool({
+    connectionString,
+    ssl,
+    max: 10,
+    // Keep sockets alive so managed Postgres (Railway) doesn't silently drop
+    // idle connections, and don't let a query hang forever if the DB blips.
+    keepAlive: true,
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 10000,
+  });
+  // CRITICAL: without this listener, an error on an idle pooled client (e.g.
+  // the DB closing an idle connection) is emitted as an unhandled 'error'
+  // event and crashes the whole process. Log and let the pool recover — the
+  // next query transparently opens a fresh connection.
+  pool.on("error", (err) => {
+    console.error("[pg] idle client error (recovered):", err?.message || err);
+  });
   return new PgDatabase(pool);
 }
