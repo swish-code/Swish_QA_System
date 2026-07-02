@@ -1694,11 +1694,18 @@ async function startServer() {
         });
       }
 
+      // Agents, Team Leaders and CC Supervisors should not see which QA
+      // authored a call — surface a unified "QA" label instead of the real
+      // evaluator name (also drops qa_id so it can't be cross-referenced).
+      const maskQA = role === 'agent' || role === 'tl' || role === 'cc_supervisor';
+
       res.json({
         data: evals.map((e) => {
           let parsedData = {};
           try { parsedData = typeof e.data === 'string' ? JSON.parse(e.data) : (e.data || {}); } catch {}
-          return { ...e, data: parsedData, coaching: coachingMap.get(e.id) || null };
+          const row = { ...e, data: parsedData, coaching: coachingMap.get(e.id) || null };
+          if (maskQA) { row.qa_name = 'QA'; row.qa_id = null; }
+          return row;
         }),
         pagination: {
           totalItems,
