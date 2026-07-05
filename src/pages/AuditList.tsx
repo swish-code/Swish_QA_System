@@ -276,6 +276,19 @@ export default function AuditList() {
     fetchEvaluations(searchParams);
   }, [searchParams, fetchEvaluations]);
 
+  // Live search — apply the search box as the user types (debounced) so no
+  // Apply click is needed. Other filters still go through Apply.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      const current = searchParams.get('search') || '';
+      if (searchTerm.trim() !== current) {
+        updateFilters({ search: searchTerm.trim(), page: 1 });
+      }
+    }, 400);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchTerm]);
+
   const updateFilters = (newParams: Record<string, string | number>) => {
     const params = new URLSearchParams(searchParams);
     Object.entries(newParams).forEach(([key, value]) => {

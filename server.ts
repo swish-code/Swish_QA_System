@@ -1617,9 +1617,11 @@ async function startServer() {
       }
 
       if (search) {
-        baseQuery += " AND (a.display_name LIKE ? OR e.brand LIKE ?)";
+        // ILIKE = case-insensitive match (PG's LIKE is case-sensitive, which
+        // forced users to type names with exact capitalization).
+        baseQuery += " AND (a.display_name ILIKE ? OR e.brand ILIKE ? OR e.call_type ILIKE ?)";
         const searchPattern = `%${search}%`;
-        params.push(searchPattern, searchPattern);
+        params.push(searchPattern, searchPattern, searchPattern);
       }
 
       // WOW Calls filter — drives the dedicated /wow-calls page.
