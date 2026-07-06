@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import * as XLSX from 'xlsx';
 import CoachingRequestDialog from '../components/CoachingRequestDialog';
 import CoachingDetailsDialog from '../components/CoachingDetailsDialog';
+import MultiSelectField from '../components/MultiSelectField';
 import { useAuth } from '../context/AuthContext';
 import {
   Search,
@@ -53,7 +54,10 @@ export default function AuditList() {
   
   // Filter States (Initial from URL or defaults)
   const [searchTerm, setSearchTerm] = useState(searchParams.get('search') || '');
-  const [selectedAgent, setSelectedAgent] = useState(searchParams.get('agent_id') || 'all');
+  // Multi-select: URL carries a comma-separated id list; empty = all agents.
+  const [selectedAgents, setSelectedAgents] = useState<string[]>(
+    (searchParams.get('agent_id') || '').split(',').map(s => s.trim()).filter(Boolean)
+  );
   const [statusFilter, setStatusFilter] = useState(searchParams.get('status') || 'all');
   const [coachingFilter, setCoachingFilter] = useState(searchParams.get('coaching_status') || 'all');
   const [scoreFilter, setScoreFilter] = useState(searchParams.get('score') || 'all');
@@ -305,7 +309,7 @@ export default function AuditList() {
 
   const handleApplyFilters = () => {
     updateFilters({
-      agent_id: selectedAgent,
+      agent_id: selectedAgents.join(','),
       status: statusFilter,
       coaching_status: coachingFilter,
       score: scoreFilter,
@@ -318,7 +322,7 @@ export default function AuditList() {
 
   const handleResetFilters = () => {
     setSearchTerm('');
-    setSelectedAgent('all');
+    setSelectedAgents([]);
     setStatusFilter('all');
     setCoachingFilter('all');
     setScoreFilter('all');
@@ -439,22 +443,15 @@ export default function AuditList() {
         <div className="flex flex-col lg:flex-row gap-3 lg:items-end">
           {/* Filters Grid */}
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-2 sm:gap-3 flex-1">
-            {/* Agent Filter */}
+            {/* Agent Filter — multi-select; empty selection = all agents */}
             <div>
               <label className="text-[9px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest block mb-1 ml-1">Agent</label>
-              <div className="relative">
-                <select
-                  className="w-full bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg pl-3 pr-7 py-2 text-xs text-zinc-800 dark:text-zinc-100 outline-none focus:border-indigo-500 appearance-none cursor-pointer"
-                  value={selectedAgent}
-                  onChange={(e) => setSelectedAgent(e.target.value)}
-                >
-                  <option value="all">All Agents</option>
-                  {agents.map(a => (
-                    <option key={a.id} value={a.id}>{a.display_name}</option>
-                  ))}
-                </select>
-                <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 dark:text-zinc-600 pointer-events-none" size={12} />
-              </div>
+              <MultiSelectField
+                options={agents.map(a => ({ value: a.id.toString(), label: a.display_name }))}
+                value={selectedAgents}
+                onChange={setSelectedAgents}
+                placeholder="All Agents"
+              />
             </div>
 
             {/* Date Filter: From */}

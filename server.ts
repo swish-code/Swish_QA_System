@@ -1590,8 +1590,15 @@ async function startServer() {
       // supervisor: no additional filter — they see every evaluation in every state.
 
       if (agent_id && agent_id !== 'all') {
-        baseQuery += " AND e.agent_id = ?";
-        params.push(agent_id);
+        // Supports one id or a comma-separated list (multi-select filter).
+        const ids = String(agent_id).split(',').map(s => parseInt(s.trim(), 10)).filter(Number.isInteger);
+        if (ids.length === 1) {
+          baseQuery += " AND e.agent_id = ?";
+          params.push(ids[0]);
+        } else if (ids.length > 1) {
+          baseQuery += ` AND e.agent_id IN (${ids.map(() => '?').join(',')})`;
+          params.push(...ids);
+        }
       }
 
       if (status && status !== 'all') {
