@@ -18,7 +18,8 @@ import {
   ShieldCheck,
   Sparkles,
   Briefcase,
-  BookOpen
+  BookOpen,
+  X
 } from 'lucide-react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
@@ -30,7 +31,13 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-export default function Sidebar() {
+type SidebarProps = {
+  /** Mobile drawer state — on lg+ screens the sidebar is always visible. */
+  mobileOpen?: boolean;
+  onMobileClose?: () => void;
+};
+
+export default function Sidebar({ mobileOpen = false, onMobileClose }: SidebarProps) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
 
@@ -63,7 +70,23 @@ export default function Sidebar() {
   const filteredLinks = links.filter(link => link.roles.includes(user?.role || ''));
 
   return (
-    <aside className="w-64 h-screen fixed left-0 top-0 glass border-r border-zinc-200 dark:border-zinc-800 flex flex-col p-4 z-50">
+    <>
+      {/* Mobile backdrop — tap anywhere outside the drawer to close it. */}
+      {mobileOpen && (
+        <div
+          className="fixed inset-0 bg-black/50 z-40 lg:hidden"
+          onClick={onMobileClose}
+          aria-hidden
+        />
+      )}
+
+      {/* Off-canvas on mobile (slides in when opened via the header menu
+          button); permanently visible on lg+ screens. */}
+      <aside className={cn(
+        "w-64 h-screen fixed left-0 top-0 glass border-r border-zinc-200 dark:border-zinc-800 flex flex-col p-4 z-50",
+        "transition-transform duration-300 lg:translate-x-0",
+        mobileOpen ? "translate-x-0" : "-translate-x-full"
+      )}>
       <div className="p-6 flex items-center justify-between mb-8">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center shadow-2xl shadow-indigo-500/40">
@@ -73,6 +96,13 @@ export default function Sidebar() {
             Swish <span className="text-indigo-600 dark:text-indigo-400">QA</span>
           </span>
         </div>
+        <button
+          onClick={onMobileClose}
+          className="lg:hidden p-2 rounded-xl text-zinc-500 hover:text-rose-500 hover:bg-rose-500/10 transition-colors"
+          aria-label="Close menu"
+        >
+          <X size={18} />
+        </button>
       </div>
 
       {/* min-h-0 lets the flex parent shrink the nav so overflow-y-auto
@@ -105,7 +135,7 @@ export default function Sidebar() {
           </div>
         </div>
 
-        <button 
+        <button
           onClick={handleLogout}
           className="w-full flex items-center gap-3 px-5 py-3 text-zinc-400 hover:text-rose-500 hover:bg-rose-500/5 rounded-2xl transition-all duration-300 text-[10px] font-black uppercase tracking-widest italic"
         >
@@ -113,6 +143,7 @@ export default function Sidebar() {
           <span>Logout</span>
         </button>
       </div>
-    </aside>
+      </aside>
+    </>
   );
 }
