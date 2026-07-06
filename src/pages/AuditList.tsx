@@ -451,6 +451,7 @@ export default function AuditList() {
                 value={selectedAgents}
                 onChange={setSelectedAgents}
                 placeholder="All Agents"
+                compact
               />
             </div>
 

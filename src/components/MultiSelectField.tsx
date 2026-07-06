@@ -10,13 +10,15 @@ type Props = {
   onChange: (next: string[]) => void;
   placeholder?: string;
   disabled?: boolean;
+  /** Small variant sized to sit inline with compact filter-bar inputs. */
+  compact?: boolean;
 };
 
 /**
  * Lightweight multi-select with chips and an inline dropdown.
  * Click outside or on a chip's X to deselect; "Select all" toggles every option.
  */
-export default function MultiSelectField({ label, options, value, onChange, placeholder = 'Select…', disabled = false }: Props) {
+export default function MultiSelectField({ label, options, value, onChange, placeholder = 'Select…', disabled = false, compact = false }: Props) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -58,17 +60,38 @@ export default function MultiSelectField({ label, options, value, onChange, plac
         type="button"
         disabled={disabled}
         onClick={() => setOpen(v => !v)}
-        className={`w-full min-h-[60px] bg-slate-50 dark:bg-zinc-900/50 border border-slate-200 dark:border-zinc-800 rounded-2xl px-4 py-3 text-left outline-none focus:border-indigo-600 shadow-inner flex flex-wrap gap-2 items-center transition-colors ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:border-indigo-500/50'} ${open ? 'border-indigo-600' : ''}`}
+        className={`w-full text-left outline-none focus:border-indigo-600 flex flex-wrap items-center transition-colors ${
+          compact
+            ? 'min-h-[34px] bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg px-3 py-1.5 gap-1'
+            : 'min-h-[60px] bg-slate-50 dark:bg-zinc-900/50 border border-slate-200 dark:border-zinc-800 rounded-2xl px-4 py-3 gap-2 shadow-inner'
+        } ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:border-indigo-500/50'} ${open ? 'border-indigo-600' : ''}`}
       >
         {valueLabels.length === 0 ? (
-          <span className="text-zinc-400 dark:text-zinc-600 text-xs font-bold italic">{placeholder}</span>
+          <span className={`text-zinc-400 dark:text-zinc-600 font-bold ${compact ? 'text-xs' : 'text-xs italic'}`}>{placeholder}</span>
+        ) : compact && valueLabels.length > 1 ? (
+          // Compact: one summary chip instead of a wrapping chip cloud so the
+          // control keeps the same height as the neighbouring inputs.
+          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-indigo-500/10 border border-indigo-500/30 text-indigo-700 dark:text-indigo-300 text-[10px] font-black uppercase tracking-widest">
+            {valueLabels.length} agents
+            <span
+              role="button"
+              tabIndex={-1}
+              onClick={(e) => { e.stopPropagation(); onChange([]); }}
+              className="hover:text-rose-500 transition-colors"
+              aria-label="Clear selection"
+            >
+              <X size={11} />
+            </span>
+          </span>
         ) : (
           valueLabels.map((lab, idx) => (
             <span
               key={idx}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-indigo-500/10 border border-indigo-500/30 text-indigo-700 dark:text-indigo-300 text-[10px] font-black uppercase tracking-widest"
+              className={`inline-flex items-center gap-1.5 rounded-lg bg-indigo-500/10 border border-indigo-500/30 text-indigo-700 dark:text-indigo-300 font-black uppercase tracking-widest ${
+                compact ? 'px-2 py-0.5 text-[9px] max-w-full' : 'px-2.5 py-1 text-[10px]'
+              }`}
             >
-              {lab}
+              <span className="truncate">{lab}</span>
               <span
                 role="button"
                 tabIndex={-1}
@@ -85,7 +108,7 @@ export default function MultiSelectField({ label, options, value, onChange, plac
           ))
         )}
         <span className="ml-auto flex-shrink-0">
-          <ChevronDown size={16} className={`text-zinc-400 transition-transform ${open ? 'rotate-180' : ''}`} />
+          <ChevronDown size={compact ? 12 : 16} className={`text-zinc-400 transition-transform ${open ? 'rotate-180' : ''}`} />
         </span>
       </button>
 
