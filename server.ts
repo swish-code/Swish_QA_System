@@ -3818,19 +3818,21 @@ async function startServer() {
       const tasksScore = tasksTotal === 0 ? 100 : (tasksOnTime / tasksTotal) * 100;
 
       // ----- Accuracy -----
-      // Deduct (severity weight × qa_share) per case opened in the month.
-      const sevWeight: Record<string, number> = { low: 2, medium: 5, high: 10 };
+      // Count-based: every non-dismissed case counts as ONE inaccurate call
+      // out of the calls the QA actually logged this month:
+      //   accuracy = (calls − cases) ÷ calls × 100
+      // e.g. 300 logged calls with 2 cases → 298 ÷ 300 = 99.33%.
+      // Severity / qa_share remain descriptive only (shown on the case, not
+      // part of the math). No logged calls → 100 unless cases exist.
       const cases = await db.prepare(
         `SELECT severity, qa_share, status FROM accuracy_cases
          WHERE qa_id = ? AND substr(CAST(created_at AS TEXT), 1, 10) >= ? AND substr(CAST(created_at AS TEXT), 1, 10) <= ?`
       ).all(qaId, monthStart, monthEnd) as any[];
-      let deductions = 0;
-      const openCases = cases.filter(c => c.status !== 'dismissed');
-      for (const c of openCases) {
-        const w = sevWeight[c.severity] || 5;
-        deductions += w * (Number(c.qa_share) || 1);
-      }
-      const accuracyScore = Math.max(0, 100 - deductions);
+      const countedCases = cases.filter(c => c.status !== 'dismissed').length;
+      const accurateCalls = Math.max(0, callsActual - countedCases);
+      const accuracyScore = callsActual <= 0
+        ? (countedCases > 0 ? 0 : 100)
+        : (accurateCalls / callsActual) * 100;
 
       // ----- Blend -----
       const totalScore =
@@ -3854,7 +3856,7 @@ async function startServer() {
         },
         duration: { actual_hours: Math.round(actualHours * 10) / 10, target_hours: targetHours, leave_days: leaveDays, score: Math.round(durationScore * 10) / 10, weight: cfg.weight_duration },
         tasks: { total: tasksTotal, on_time: tasksOnTime, overdue: tasksOverdue, sla_hours: cfg.escalation_sla_hours, score: Math.round(tasksScore * 10) / 10, weight: cfg.weight_tasks },
-        accuracy: { cases: openCases.length, deductions: Math.round(deductions * 10) / 10, score: Math.round(accuracyScore * 10) / 10, weight: cfg.weight_accuracy },
+        accuracy: { cases: countedCases, total_calls: callsActual, accurate_calls: accurateCalls, score: Math.round(accuracyScore * 10) / 10, weight: cfg.weight_accuracy },
         total_score: Math.round(totalScore * 10) / 10,
       };
     };

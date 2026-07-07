@@ -34,7 +34,7 @@ type Detail = {
   };
   duration: { actual_hours: number; target_hours: number; leave_days: number; score: number; weight: number };
   tasks: { total: number; on_time: number; overdue: number; sla_hours: number; score: number; weight: number };
-  accuracy: { cases: number; deductions: number; score: number; weight: number };
+  accuracy: { cases: number; total_calls: number; accurate_calls: number; score: number; weight: number };
   total_score: number;
 };
 
@@ -156,7 +156,8 @@ export default function QAKPIs() {
           'Tasks Score': d.tasks.score,
           'Tasks Weight %': (d.tasks.weight * 100).toFixed(0),
           'Accuracy Cases': d.accuracy.cases,
-          'Accuracy Deductions': d.accuracy.deductions,
+          'Accurate Calls': d.accuracy.accurate_calls,
+          'Total Calls': d.accuracy.total_calls,
           'Accuracy Score': d.accuracy.score,
           'Accuracy Weight %': (d.accuracy.weight * 100).toFixed(0),
           'TOTAL SCORE': d.total_score,
@@ -421,7 +422,7 @@ function DetailPanel({ detail, qaName, onUpdated }: { detail: Detail; qaName: st
       weight: detail.accuracy.weight,
       lines: [
         ['Cases', `${detail.accuracy.cases}`],
-        ['Deductions', `${detail.accuracy.deductions}`],
+        ['Accurate', `${detail.accuracy.accurate_calls} / ${detail.accuracy.total_calls}`],
       ],
     },
   ] as const;
