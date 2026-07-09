@@ -3469,6 +3469,27 @@ async function startServer() {
 
         const total = rows.reduce((s, r) => s + Number(r.call_count || 0), 0);
 
+        // Active time per QA within the same window (login → last_seen from
+        // user_sessions, same source as the Duration KPI). Lets the card show
+        // how long each QA took to log their calls + the avg time per call.
+        const sessConds: string[] = [];
+        const sessParams: any[] = [];
+        if (start_date) { sessConds.push("substr(CAST(s.login_at AS TEXT), 1, 10) >= ?"); sessParams.push(start_date); }
+        if (effectiveEnd) { sessConds.push("substr(CAST(s.login_at AS TEXT), 1, 10) <= ?"); sessParams.push(effectiveEnd); }
+        const sessWhere = sessConds.length ? `AND ${sessConds.join(' AND ')}` : '';
+        const sessRows = await db.prepare(`
+          SELECT s.user_id, s.login_at, s.last_seen_at
+          FROM user_sessions s JOIN users u ON s.user_id = u.id
+          WHERE u.role = 'qa' ${sessWhere}
+        `).all(...sessParams) as any[];
+        const secsMap = new Map<number, number>();
+        for (const s of sessRows) {
+          if (!s.login_at) continue;
+          const a = new Date(s.login_at).getTime();
+          const b = s.last_seen_at ? new Date(s.last_seen_at).getTime() : a;
+          if (b > a) secsMap.set(s.user_id, (secsMap.get(s.user_id) || 0) + Math.floor((b - a) / 1000));
+        }
+
         res.json({
           start_date: start_date || null,
           end_date: effectiveEnd || null,
@@ -3478,6 +3499,7 @@ async function startServer() {
             display_name: r.display_name,
             username: r.username,
             call_count: Number(r.call_count || 0),
+            active_seconds: secsMap.get(r.id) || 0,
           })),
         });
       } catch (e: any) {

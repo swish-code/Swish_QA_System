@@ -8,6 +8,22 @@ type QARow = {
   display_name: string;
   username: string;
   call_count: number;
+  /** Total active session time (seconds) within the selected window. */
+  active_seconds: number;
+};
+
+// "3h 20m" / "45m" — compact duration for the row footer.
+const fmtDuration = (secs: number): string => {
+  if (!secs || secs <= 0) return '0m';
+  const h = Math.floor(secs / 3600);
+  const m = Math.round((secs % 3600) / 60);
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+};
+
+// Average minutes per call, one decimal (e.g. "5.5m").
+const fmtAvgPerCall = (secs: number, calls: number): string => {
+  if (!secs || !calls) return '—';
+  return `${(secs / 60 / calls).toFixed(1)}m`;
 };
 
 type QACallsResponse = {
@@ -245,6 +261,12 @@ export default function QACallsCard() {
                       {qa.call_count.toLocaleString()}
                     </p>
                     <p className="text-[9px] font-bold uppercase tracking-widest text-zinc-400 dark:text-zinc-600">calls</p>
+                    <p
+                      className="text-[9px] font-bold text-indigo-500 dark:text-indigo-400 tabular-nums whitespace-nowrap mt-0.5"
+                      title="Active time in the selected window · average time per registered call"
+                    >
+                      {fmtDuration(qa.active_seconds)} · avg {fmtAvgPerCall(qa.active_seconds, qa.call_count)}/call
+                    </p>
                   </div>
                 </div>
               );
