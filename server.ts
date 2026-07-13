@@ -1201,14 +1201,18 @@ async function startServer() {
         // AND at least one entry is a brand that actually exists in any
         // evaluation. Otherwise treat as unrestricted (stale config).
         if (scope.brands && scope.brands.length > 0) {
+          // Case-insensitive matching throughout: brand values were saved
+          // with inconsistent casing over time ("Mishmash" vs "MISHMASH"),
+          // and a case-sensitive IN () silently hid those calls from scoped
+          // users even though the brand was clearly assigned to them.
           const liveBrands = await db.prepare(
             "SELECT DISTINCT brand FROM evaluations WHERE brand IS NOT NULL"
           ).all() as any[];
-          const liveSet = new Set(liveBrands.map((r: any) => r.brand));
-          const effective = scope.brands.filter(b => liveSet.has(b));
+          const liveSet = new Set(liveBrands.map((r: any) => String(r.brand).toUpperCase()));
+          const effective = scope.brands.filter(b => liveSet.has(String(b).toUpperCase()));
           if (effective.length > 0) {
-            parts.push(`${aliases.e}.brand IN (${effective.map(() => '?').join(',')})`);
-            params.push(...effective);
+            parts.push(`UPPER(${aliases.e}.brand) IN (${effective.map(() => '?').join(',')})`);
+            params.push(...effective.map(b => String(b).toUpperCase()));
           }
         }
 
@@ -1251,11 +1255,14 @@ async function startServer() {
         const liveBrands = await db.prepare(
           "SELECT DISTINCT brand FROM evaluations WHERE brand IS NOT NULL"
         ).all() as any[];
-        const liveSet = new Set(liveBrands.map((r: any) => r.brand));
-        const effective = brands.filter(b => liveSet.has(b));
+        const liveSet = new Set(liveBrands.map((r: any) => String(r.brand).toUpperCase()));
+        const effective = brands.filter(b => liveSet.has(String(b).toUpperCase()));
         if (effective.length === 0) return { clause: '', params: [] };
         const brandPh = effective.map(() => '?').join(',');
-        return { clause: ` AND ${aliases.e}.brand IN (${brandPh}) `, params: [...effective] };
+        return {
+          clause: ` AND UPPER(${aliases.e}.brand) IN (${brandPh}) `,
+          params: effective.map(b => String(b).toUpperCase()),
+        };
       }
 
       return { clause: '', params: [] };
