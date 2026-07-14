@@ -301,7 +301,11 @@ export default function EvaluationForm() {
       if (user?.role === 'qa') {
         const allowed: string[] = (user as any).allowed_brands || [];
         if (allowed.length > 0) {
-          const intersection = options.brand.filter((b: any) => allowed.includes(b.value));
+          // Case-insensitive match — brand values were saved with mixed
+          // casing over time ("MISHMASH" vs "Mishmash"); a strict compare
+          // silently dropped a brand the QA was clearly assigned.
+          const allowedUpper = allowed.map(b => String(b).toUpperCase());
+          const intersection = options.brand.filter((b: any) => allowedUpper.includes(String(b.value).toUpperCase()));
           if (intersection.length > 0) {
             options.brand = intersection;
           }
