@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Check, ChevronDown, X } from 'lucide-react';
+import { Check, ChevronDown, X, Search } from 'lucide-react';
 
 type Option = { value: string; label: string };
 
@@ -20,7 +20,9 @@ type Props = {
  */
 export default function MultiSelectField({ label, options, value, onChange, placeholder = 'Select…', disabled = false, compact = false }: Props) {
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
   const rootRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
 
   // Close on outside click
   useEffect(() => {
@@ -34,15 +36,30 @@ export default function MultiSelectField({ label, options, value, onChange, plac
     return () => document.removeEventListener('mousedown', handler);
   }, [open]);
 
+  // Fresh search + keyboard focus every time the dropdown opens.
+  useEffect(() => {
+    if (open) {
+      setQuery('');
+      setTimeout(() => searchRef.current?.focus(), 0);
+    }
+  }, [open]);
+
   const toggle = (v: string) => {
     if (value.includes(v)) onChange(value.filter(x => x !== v));
     else onChange([...value, v]);
   };
 
-  const allSelected = options.length > 0 && options.every(o => value.includes(o.value));
+  // Type-to-filter the option list so long rosters don't need scrolling.
+  const q = query.trim().toLowerCase();
+  const visibleOptions = q ? options.filter(o => o.label.toLowerCase().includes(q)) : options;
+
+  // "Select all" operates on the visible (filtered) set: with a query it
+  // adds/removes just the matches, without one it toggles everything.
+  const allSelected = visibleOptions.length > 0 && visibleOptions.every(o => value.includes(o.value));
   const toggleAll = () => {
-    if (allSelected) onChange([]);
-    else onChange(options.map(o => o.value));
+    const visible = visibleOptions.map(o => o.value);
+    if (allSelected) onChange(value.filter(v => !visible.includes(v)));
+    else onChange(Array.from(new Set([...value, ...visible])));
   };
 
   const valueLabels = value
@@ -120,15 +137,44 @@ export default function MultiSelectField({ label, options, value, onChange, plac
             </div>
           ) : (
             <>
+              {/* Type-to-search — filters the list below as you type */}
+              <div className="sticky top-0 bg-white dark:bg-zinc-950 border-b border-zinc-100 dark:border-zinc-800 p-2">
+                <div className="relative">
+                  <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400 dark:text-zinc-600" />
+                  <input
+                    ref={searchRef}
+                    type="text"
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    onKeyDown={(e) => e.stopPropagation()}
+                    placeholder="Search…"
+                    className="w-full bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg pl-7 pr-7 py-1.5 text-xs text-zinc-800 dark:text-zinc-100 outline-none focus:border-indigo-500 placeholder:text-zinc-400"
+                  />
+                  {query && (
+                    <button
+                      type="button"
+                      onClick={() => { setQuery(''); searchRef.current?.focus(); }}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-rose-500 transition-colors"
+                      aria-label="Clear search"
+                    >
+                      <X size={12} />
+                    </button>
+                  )}
+                </div>
+              </div>
               <button
                 type="button"
                 onClick={toggleAll}
                 className="w-full text-left px-4 py-2.5 border-b border-zinc-100 dark:border-zinc-800 text-[10px] font-black uppercase tracking-widest text-indigo-600 dark:text-indigo-400 hover:bg-zinc-50 dark:hover:bg-zinc-900 transition-colors flex items-center justify-between"
               >
-                <span>{allSelected ? 'Deselect all' : 'Select all'}</span>
+                <span>{allSelected ? (q ? 'Deselect matches' : 'Deselect all') : (q ? 'Select matches' : 'Select all')}</span>
                 <span className="text-zinc-400">{value.length} / {options.length}</span>
               </button>
-              {options.map(opt => {
+              {visibleOptions.length === 0 ? (
+                <div className="p-4 text-center text-[10px] font-bold uppercase tracking-widest text-zinc-400 dark:text-zinc-600">
+                  No matches
+                </div>
+              ) : visibleOptions.map(opt => {
                 const selected = value.includes(opt.value);
                 return (
                   <button
