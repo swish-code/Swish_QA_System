@@ -922,6 +922,86 @@ async function startServer() {
       );
     }
 
+    // -----------------------------------------------------------------
+    // Casing hygiene — brand / call-type values must have ONE canonical
+    // casing everywhere. Historically, options re-added from Form Settings
+    // with different casing ("MISHMASH" vs "Mishmash") split analytics and
+    // silently hid calls from scoped TLs/QAs. Runs on every boot; each
+    // statement only touches mismatched rows, so it's a no-op when clean.
+    // -----------------------------------------------------------------
+    try {
+      // (a) Deactivate duplicate ACTIVE options that differ only by case or
+      //     surrounding spaces — keep the lowest id per normalized value.
+      await db.exec(`
+        UPDATE form_settings SET is_active = 0
+        WHERE is_active = 1 AND field_type IN ('brand','call_type')
+          AND id NOT IN (
+            SELECT MIN(id) FROM form_settings
+            WHERE is_active = 1 AND field_type IN ('brand','call_type')
+            GROUP BY field_type, UPPER(TRIM(value))
+          )
+      `);
+
+      // (b) Align historical evaluations with the canonical option casing.
+      await db.exec(`
+        UPDATE evaluations e SET brand = fs.value
+        FROM form_settings fs
+        WHERE fs.field_type = 'brand' AND fs.is_active = 1
+          AND UPPER(TRIM(e.brand)) = UPPER(TRIM(fs.value)) AND e.brand <> fs.value
+      `);
+      await db.exec(`
+        UPDATE evaluations e SET call_type = fs.value
+        FROM form_settings fs
+        WHERE fs.field_type = 'call_type' AND fs.is_active = 1
+          AND UPPER(TRIM(e.call_type)) = UPPER(TRIM(fs.value)) AND e.call_type <> fs.value
+      `);
+
+      // (c) Fix casing inside users.allowed_brands (JSON arrays). Entries
+      //     that don't match any active brand are kept as-is (never widen
+      //     access by silently dropping a restriction).
+      const activeBrandRows = await db.prepare(
+        "SELECT value FROM form_settings WHERE field_type = 'brand' AND is_active = 1"
+      ).all() as any[];
+      const canonBrandMap = new Map(activeBrandRows.map((r: any) => [String(r.value).trim().toUpperCase(), String(r.value)]));
+      const scopedUsers = await db.prepare(
+        "SELECT id, allowed_brands FROM users WHERE allowed_brands IS NOT NULL"
+      ).all() as any[];
+      for (const u of scopedUsers) {
+        let list: any;
+        try { list = JSON.parse(u.allowed_brands); } catch { continue; }
+        if (!Array.isArray(list)) continue;
+        const fixed = Array.from(new Set(list.map((b: any) => canonBrandMap.get(String(b).trim().toUpperCase()) || b)));
+        if (JSON.stringify(fixed) !== JSON.stringify(list)) {
+          await db.prepare("UPDATE users SET allowed_brands = ? WHERE id = ?").run(JSON.stringify(fixed), u.id);
+        }
+      }
+    } catch (err) {
+      console.error("Casing hygiene pass failed (non-fatal):", err);
+    }
+
+    // Resolve a submitted brand / call-type to the exact stored value of the
+    // matching ACTIVE option (case/space-insensitive), so every write path
+    // persists one canonical casing. Unknown values pass through trimmed.
+    const canonicalOptionValue = async (fieldType: string, raw: any): Promise<any> => {
+      if (raw === null || raw === undefined) return raw;
+      const v = String(raw).trim();
+      if (!v) return v;
+      const row = await db.prepare(
+        "SELECT value FROM form_settings WHERE field_type = ? AND is_active = 1 AND UPPER(TRIM(value)) = UPPER(?) ORDER BY id LIMIT 1"
+      ).get(fieldType, v) as any;
+      return row?.value ?? v;
+    };
+
+    // Same guarantee for an allowed-brands list (User Management saves):
+    // each entry lands as the canonical casing of the matching active brand;
+    // duplicates collapse; unknown entries pass through trimmed.
+    const canonicalizeBrandList = async (list: any): Promise<any[]> => {
+      if (!Array.isArray(list)) return [];
+      const out: any[] = [];
+      for (const b of list) out.push(await canonicalOptionValue('brand', b));
+      return Array.from(new Set(out));
+    };
+
     app.use(cors());
     app.use(express.json());
 
@@ -1472,7 +1552,7 @@ async function startServer() {
       // (supervisor/agent) are untouched.
       const depsJson = role === 'qa' ? JSON.stringify(Array.isArray(allowed_departments) ? allowed_departments : []) : null;
       const brandsJson = (role === 'qa' || role === 'tl')
-        ? JSON.stringify(Array.isArray(allowed_brands) ? allowed_brands : [])
+        ? JSON.stringify(await canonicalizeBrandList(allowed_brands))
         : null;
       const ccSupId = role === 'tl' ? (cc_supervisor_id || null) : null;
       try {
@@ -1495,7 +1575,7 @@ async function startServer() {
 
         const depsJson = role === 'qa' ? JSON.stringify(Array.isArray(allowed_departments) ? allowed_departments : []) : null;
         const brandsJson = (role === 'qa' || role === 'tl')
-          ? JSON.stringify(Array.isArray(allowed_brands) ? allowed_brands : [])
+          ? JSON.stringify(await canonicalizeBrandList(allowed_brands))
           : null;
         const ccSupId = role === 'tl' ? (cc_supervisor_id || null) : null;
 
@@ -1735,7 +1815,12 @@ async function startServer() {
     });
 
     app.post("/api/evaluations", async (req, res) => {
-      const { date, agent_id, qa_id, brand, call_type, final_score, critical_failure, data, draft_id, is_wow } = req.body;
+      const { date, agent_id, qa_id, final_score, critical_failure, data, draft_id, is_wow } = req.body;
+
+      // Persist the canonical option casing regardless of what the client
+      // sent — prevents the "MISHMASH vs Mishmash" split at the source.
+      const brand = await canonicalOptionValue('brand', req.body.brand);
+      const call_type = await canonicalOptionValue('call_type', req.body.call_type);
 
       // Workflow rule:
       //   score >= 90  → goes straight to Agent + TL (no approval needed)
@@ -1796,8 +1881,11 @@ async function startServer() {
     });
 
     app.put("/api/evaluations/:id", async (req, res) => {
-      const { date, agent_id, qa_id, brand, call_type, final_score, critical_failure, data, status, is_wow, editor_id } = req.body;
+      const { date, agent_id, qa_id, final_score, critical_failure, data, status, is_wow, editor_id } = req.body;
       const evaluation_id = req.params.id;
+      // Same canonical-casing guarantee as on create.
+      const brand = await canonicalOptionValue('brand', req.body.brand);
+      const call_type = await canonicalOptionValue('call_type', req.body.call_type);
 
       // Snapshot the row before the update so we can diff it for the QA edit
       // trail (who changed what, when). Skipped silently if the row vanished.
@@ -2196,7 +2284,38 @@ async function startServer() {
     });
 
     app.post("/api/settings/form", async (req, res) => {
-      const { field_type, label_en, label_ar, value, is_active, sort_order, id } = req.body;
+      const { field_type, label_en, label_ar, is_active, sort_order, id } = req.body;
+      let { value } = req.body;
+
+      // Brand / call-type values are compared all over the system (scopes,
+      // analytics, filters), so they must stay unique case-insensitively.
+      // Trim them and refuse a second option that differs only by casing —
+      // that's exactly what caused calls to vanish for scoped users.
+      const isPlainValueType = field_type === 'brand' || field_type === 'call_type';
+      if (isPlainValueType && typeof value === 'string') value = value.trim();
+
+      if (isPlainValueType && value) {
+        const dup = await db.prepare(
+          `SELECT id, is_active FROM form_settings
+           WHERE field_type = ? AND UPPER(TRIM(value)) = UPPER(?) AND id <> ?
+           ORDER BY is_active DESC, id LIMIT 1`
+        ).get(field_type, value, id || 0) as any;
+
+        if (dup && !id) {
+          if (dup.is_active) {
+            return res.status(409).json({ error: `A ${field_type} with this name already exists (values are case-insensitive).` });
+          }
+          // Re-adding a previously deactivated option → reactivate the
+          // original row instead of creating a casing twin.
+          await db.prepare("UPDATE form_settings SET label_en=?, label_ar=?, is_active=1, sort_order=? WHERE id=?")
+            .run(label_en, label_ar, sort_order || 0, dup.id);
+          return res.json({ success: true, reactivated: dup.id });
+        }
+        if (dup && id && dup.is_active) {
+          return res.status(409).json({ error: `Another active ${field_type} already uses this name (values are case-insensitive).` });
+        }
+      }
+
       if (id) {
         await db.prepare("UPDATE form_settings SET field_type=?, label_en=?, label_ar=?, value=?, is_active=?, sort_order=? WHERE id=?")
           .run(field_type, label_en, label_ar, value, is_active ? 1 : 0, sort_order || 0, id);
