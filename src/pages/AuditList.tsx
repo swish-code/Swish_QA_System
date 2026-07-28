@@ -506,6 +506,7 @@ export default function AuditList() {
                   onChange={(e) => setScoreFilter(e.target.value)}
                 >
                   <option value="all">All</option>
+                  <option value="zero">Zero (0%)</option>
                   <option value="lt90">Less than 90</option>
                   <option value="gte90">90 or Above</option>
                 </select>
