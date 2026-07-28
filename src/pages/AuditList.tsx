@@ -280,6 +280,15 @@ export default function AuditList() {
     fetchEvaluations(searchParams);
   }, [searchParams, fetchEvaluations]);
 
+  // Remember the current filter/page state so the sidebar "All Calls" link
+  // can restore it after visiting a call — instead of resetting everything.
+  useEffect(() => {
+    try {
+      const qs = searchParams.toString();
+      sessionStorage.setItem('audits:lastQuery', qs ? `?${qs}` : '');
+    } catch { /* storage unavailable — harmless */ }
+  }, [searchParams]);
+
   // Live search — apply the search box as the user types (debounced) so no
   // Apply click is needed. Other filters still go through Apply.
   useEffect(() => {

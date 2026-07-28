@@ -46,11 +46,16 @@ export default function Sidebar({ mobileOpen = false, onMobileClose }: SidebarPr
     navigate('/login');
   };
 
+  // "All Calls" restores the user's last filters/page instead of resetting —
+  // AuditList keeps its current query string in sessionStorage.
+  let auditsLastQuery = '';
+  try { auditsLastQuery = sessionStorage.getItem('audits:lastQuery') || ''; } catch { /* ignore */ }
+
   const links = [
     { name: 'Dashboard', icon: LayoutDashboard, path: '/', roles: ['supervisor', 'cc_supervisor', 'qa', 'tl', 'agent'] },
     { name: 'Info', icon: BookOpen, path: '/info', roles: ['supervisor', 'cc_supervisor', 'qa', 'tl', 'agent'] },
     { name: 'New Evaluation', icon: Zap, path: '/evaluate', roles: ['qa'] },
-    { name: 'All calls', icon: FileCheck, path: '/audits', roles: ['qa', 'supervisor', 'cc_supervisor', 'tl', 'agent'] },
+    { name: 'All calls', icon: FileCheck, path: `/audits${auditsLastQuery}`, roles: ['qa', 'supervisor', 'cc_supervisor', 'tl', 'agent'] },
     { name: 'Analysis Deck', icon: Activity, path: '/analysis', roles: ['qa', 'supervisor', 'cc_supervisor', 'tl', 'agent'] },
     { name: 'CC Operations', icon: Briefcase, path: '/cc-operations', roles: ['cc_supervisor', 'supervisor'] },
     { name: 'Team Performance', icon: BarChart3, path: '/team', roles: ['tl', 'supervisor', 'cc_supervisor'] },
