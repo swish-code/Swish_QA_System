@@ -1404,22 +1404,15 @@ export default function EvaluationForm() {
            </button>
          )}
 
-         {/* TL Review Actions */}
-         {id && formData.status === 'Pending Review' && (user?.role === 'tl' || user?.role === 'supervisor') && (
-           <div className="flex gap-4">
-             <button 
-               onClick={() => { setPendingAction('approved'); setActionComment(''); setShowActionModal(true); }}
-               className="px-8 py-4 rounded-2xl bg-emerald-600 text-white font-black text-[10px] uppercase tracking-[0.2em] shadow-xl shadow-emerald-500/20"
-             >
-               Approve Interaction
-             </button>
-             <button 
-               onClick={() => { setPendingAction('escalated'); setActionComment(''); setShowActionModal(true); }}
-               className="px-8 py-4 rounded-2xl bg-rose-600 text-white font-black text-[10px] uppercase tracking-[0.2em] shadow-xl shadow-rose-500/20"
-             >
-               Escalate to QA
-             </button>
-           </div>
+         {/* TL Escalation — only the Team Leader escalates; any call scored
+             below 100 that isn't already in (or past) the Quality cycle. */}
+         {id && formData.status === 'Sent to Agent' && user?.role === 'tl' && Number(formData.final_score) < 100 && (
+           <button
+             onClick={() => { setPendingAction('escalated'); setActionComment(''); setShowActionModal(true); }}
+             className="px-8 py-4 rounded-2xl bg-rose-600 text-white font-black text-[10px] uppercase tracking-[0.2em] shadow-xl shadow-rose-500/20"
+           >
+             Escalate to QA
+           </button>
          )}
 
          {/* QA Re-evaluation Actions (Moved) */}

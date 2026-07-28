@@ -979,6 +979,20 @@ async function startServer() {
       console.error("Casing hygiene pass failed (non-fatal):", err);
     }
 
+    // Workflow simplification (2026-07): the TL pre-approval stage is gone —
+    // every evaluation is visible to the Agent immediately. Migrate any rows
+    // still parked in 'Pending Review', and cancel pending agent-initiated
+    // escalation requests (the feature was removed; only TLs escalate now).
+    // Both statements are idempotent no-ops once the data is migrated.
+    try {
+      const mig = await db.prepare("UPDATE evaluations SET status = 'Sent to Agent' WHERE status = 'Pending Review'").run();
+      if (mig.changes > 0) console.log(`[migration] ${mig.changes} 'Pending Review' evaluations released to agents.`);
+      const esc = await db.prepare("UPDATE evaluations SET agent_escalation_status = NULL WHERE agent_escalation_status = 'pending'").run();
+      if (esc.changes > 0) console.log(`[migration] ${esc.changes} pending agent escalation requests cancelled.`);
+    } catch (err) {
+      console.error("Workflow migration failed (non-fatal):", err);
+    }
+
     // Resolve a submitted brand / call-type to the exact stored value of the
     // matching ACTIVE option (case/space-insensitive), so every write path
     // persists one canonical casing. Unknown values pass through trimmed.
@@ -1641,13 +1655,12 @@ async function startServer() {
       let params: any[] = [];
 
       if (role === 'agent') {
-        // Agent only sees evaluations that completed the approval cycle:
-        //   - Auto-approved (score ≥ 90 on creation)              → 'Sent to Agent'
-        //   - TL approved a < 90 score                            → 'Sent to Agent'
-        //   - Quality approved/rejected after a TL escalation     → 'Quality Approved' / 'Rejected by Quality'
-        // Evaluations in 'Pending Review' or 'Escalated' are hidden from the Agent
-        // because the cycle hasn't finished yet.
-        baseQuery += " AND e.agent_id = ? AND e.status IN ('Sent to Agent', 'Quality Approved', 'Rejected by Quality')";
+        // Agent sees every evaluation of theirs — calls are visible from the
+        // moment they're registered ('Sent to Agent'), stay visible while a
+        // TL escalation is under Quality review ('Escalated'), and after the
+        // decision ('Quality Approved' / 'Rejected by Quality'). Legacy
+        // 'Pending Review' rows are migrated to 'Sent to Agent' at boot.
+        baseQuery += " AND e.agent_id = ? AND e.status IN ('Sent to Agent', 'Escalated', 'Quality Approved', 'Rejected by Quality')";
         params.push(user_id);
       } else if (role === 'tl') {
         // TL visibility is brand-based — assigned via User Management. We no
@@ -1826,10 +1839,10 @@ async function startServer() {
       const brand = await canonicalOptionValue('brand', req.body.brand);
       const call_type = await canonicalOptionValue('call_type', req.body.call_type);
 
-      // Workflow rule:
-      //   score >= 90  → goes straight to Agent + TL (no approval needed)
-      //   score <  90  → goes to TL only; Agent does NOT see it until cycle ends
-      const status = final_score >= 90 ? 'Sent to Agent' : 'Pending Review';
+      // Workflow rule: every evaluation goes straight to the Agent regardless
+      // of score. There is no TL pre-approval stage anymore — instead, the TL
+      // can escalate any call scored below 100 directly (tl-action).
+      const status = 'Sent to Agent';
 
       const result = await db.prepare("INSERT INTO evaluations (date, agent_id, qa_id, brand, call_type, final_score, critical_failure, data, status, is_wow, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)")
         .run(date, agent_id, qa_id, brand, call_type, final_score, critical_failure ? 1 : 0, JSON.stringify(data), status, is_wow ? 1 : 0);
@@ -1864,21 +1877,13 @@ async function startServer() {
         Time: ${timestamp}
       `.trim();
 
-      if (status === 'Sent to Agent') {
-        // High score (>= 90): both Agent and TL get notified, no approvals needed.
+      // Every evaluation is immediately visible: notify the Agent and their TL.
+      // The TL can escalate from All Calls / the call view if they dispute it.
+      await db.prepare("INSERT INTO notifications (user_id, title, message, evaluation_id) VALUES (?, ?, ?, ?)")
+        .run(agent_id, "New Evaluation Received", notificationMsg, evaluation_id);
+      if (agent?.tl_id) {
         await db.prepare("INSERT INTO notifications (user_id, title, message, evaluation_id) VALUES (?, ?, ?, ?)")
-          .run(agent_id, "New Evaluation Received", notificationMsg, evaluation_id);
-        if (agent?.tl_id) {
-          await db.prepare("INSERT INTO notifications (user_id, title, message, evaluation_id) VALUES (?, ?, ?, ?)")
-            .run(agent.tl_id, "New Evaluation (Score ≥ 90%)", notificationMsg, evaluation_id);
-        }
-      } else {
-        // Low score (< 90): only TL is notified; Agent is intentionally NOT notified
-        // and the evaluation is hidden from them until the approval cycle finishes.
-        if (agent?.tl_id) {
-          await db.prepare("INSERT INTO notifications (user_id, title, message, evaluation_id) VALUES (?, ?, ?, ?)")
-            .run(agent.tl_id, "Evaluation Pending Review (Score < 90%)", notificationMsg, evaluation_id);
-        }
+          .run(agent.tl_id, "New Evaluation Registered", notificationMsg, evaluation_id);
       }
 
       res.json({ success: true, id: evaluation_id });
@@ -1999,129 +2004,24 @@ async function startServer() {
       }
     });
 
-    // -----------------------------------------------------------------
-    // Agent-initiated escalation (dispute) — Agent → TL → (Quality | closed)
-    // -----------------------------------------------------------------
-
-    // Step 1: the Agent requests a re-review of their own call. Allowed only
-    // when the call is visible to them ('Sent to Agent'), scored below 100,
-    // and has never been escalated before (agent_escalation_status IS NULL).
-    app.post("/api/evaluations/:id/agent-escalate", async (req, res) => {
-      try {
-        const { user_id, reason } = req.body;
-        const evaluation_id = req.params.id;
-
-        const ev = await db.prepare(
-          "SELECT agent_id, qa_id, final_score, status, agent_escalation_status FROM evaluations WHERE id = ?"
-        ).get(evaluation_id) as any;
-        if (!ev) return res.status(404).json({ error: "Evaluation not found" });
-
-        // Must be the agent's own call.
-        if (Number(ev.agent_id) !== Number(user_id)) {
-          return res.status(403).json({ error: "You can only escalate your own calls." });
-        }
-        // Eligibility — mirrors the button-visibility rules on the client.
-        if (ev.status !== 'Sent to Agent') {
-          return res.status(400).json({ error: "This call is not eligible for escalation." });
-        }
-        if (Number(ev.final_score) >= 100) {
-          return res.status(400).json({ error: "Full-score calls cannot be escalated." });
-        }
-        if (ev.agent_escalation_status) {
-          return res.status(400).json({ error: "An escalation request already exists for this call." });
-        }
-
-        await db.prepare(
-          "UPDATE evaluations SET agent_escalation_status = 'pending', agent_escalation_reason = ?, agent_escalation_at = CURRENT_TIMESTAMP WHERE id = ?"
-        ).run(reason || null, evaluation_id);
-
-        // Use a distinct action ('requested') so the agent's request is never
-        // miscounted by the many queries that count action = 'escalated'.
-        await db.prepare(
-          "INSERT INTO escalation_logs (evaluation_id, user_id, role, action, comment, old_score, new_score) VALUES (?, ?, 'agent', 'requested', ?, ?, ?)"
-        ).run(evaluation_id, user_id, reason || '', ev.final_score, ev.final_score);
-
-        // Notify the agent's TL.
-        const agent = await db.prepare("SELECT display_name, tl_id FROM users WHERE id = ?").get(ev.agent_id) as any;
-        if (agent?.tl_id) {
-          await db.prepare("INSERT INTO notifications (user_id, title, message, evaluation_id) VALUES (?, ?, ?, ?)")
-            .run(
-              agent.tl_id,
-              "Agent Escalation Request",
-              `${agent.display_name} requested a re-review of evaluation #${evaluation_id} (score ${ev.final_score}%).\nReason: ${reason || '(none)'}`,
-              evaluation_id
-            );
-        }
-
-        res.json({ success: true });
-      } catch (e: any) {
-        res.status(500).json({ error: e.message });
-      }
-    });
-
-    // Step 2: the TL decides on a pending agent escalation request.
-    //   approve → call enters the normal Quality escalation flow ('Escalated')
-    //   reject  → request closed, call stays 'Sent to Agent', reason kept
-    app.post("/api/evaluations/:id/agent-escalation-decision", async (req, res) => {
-      try {
-        const { user_id, action, comment } = req.body; // action: 'approve' | 'reject'
-        const evaluation_id = req.params.id;
-
-        const ev = await db.prepare(
-          "SELECT agent_id, qa_id, final_score, status, agent_escalation_status FROM evaluations WHERE id = ?"
-        ).get(evaluation_id) as any;
-        if (!ev) return res.status(404).json({ error: "Evaluation not found" });
-        if (ev.agent_escalation_status !== 'pending') {
-          return res.status(400).json({ error: "No pending escalation request for this call." });
-        }
-
-        const tl = await db.prepare("SELECT display_name FROM users WHERE id = ?").get(user_id) as any;
-        const tlName = tl?.display_name || `TL #${user_id}`;
-        const actionTime = new Date().toLocaleString();
-
-        if (action === 'approve') {
-          // Hand off to the normal Quality review cycle.
-          await db.prepare(
-            "UPDATE evaluations SET agent_escalation_status = 'approved', agent_escalation_response = ?, status = 'Escalated' WHERE id = ?"
-          ).run(comment || null, evaluation_id);
-
-          // Log as a standard TL escalation so Quality picks it up and the
-          // audit trail / dashboard stats stay consistent.
-          await db.prepare(
-            "INSERT INTO escalation_logs (evaluation_id, user_id, role, action, comment, old_score, new_score) VALUES (?, ?, 'tl', 'escalated', ?, ?, ?)"
-          ).run(evaluation_id, user_id, comment || 'Approved agent escalation request', ev.final_score, ev.final_score);
-
-          await db.prepare("INSERT INTO notifications (user_id, title, message, evaluation_id) VALUES (?, ?, ?, ?)")
-            .run(ev.qa_id, "Evaluation Escalated (Agent request)", `${tlName} approved an agent escalation for evaluation #${evaluation_id} on ${actionTime}. Please review.`, evaluation_id);
-          await db.prepare("INSERT INTO notifications (user_id, title, message, evaluation_id) VALUES (?, ?, ?, ?)")
-            .run(ev.agent_id, "Escalation Approved", `${tlName} approved your escalation request for evaluation #${evaluation_id}. It has been sent to Quality for review.`, evaluation_id);
-        } else {
-          // Reject — close the request; the call is unchanged.
-          await db.prepare(
-            "UPDATE evaluations SET agent_escalation_status = 'rejected', agent_escalation_response = ? WHERE id = ?"
-          ).run(comment || null, evaluation_id);
-
-          await db.prepare(
-            "INSERT INTO escalation_logs (evaluation_id, user_id, role, action, comment, old_score, new_score) VALUES (?, ?, 'tl', 'rejected', ?, ?, ?)"
-          ).run(evaluation_id, user_id, comment || 'Rejected agent escalation request', ev.final_score, ev.final_score);
-
-          await db.prepare("INSERT INTO notifications (user_id, title, message, evaluation_id) VALUES (?, ?, ?, ?)")
-            .run(ev.agent_id, "Escalation Rejected", `${tlName} rejected your escalation request for evaluation #${evaluation_id}.\nReason: ${comment || '(none)'}`, evaluation_id);
-        }
-
-        res.json({ success: true });
-      } catch (e: any) {
-        res.status(500).json({ error: e.message });
-      }
-    });
-
-    // Escalations & Workflow
+    // Escalations & Workflow — only the Team Leader escalates. Any call
+    // scored below 100 that isn't already in (or past) the Quality cycle
+    // can be escalated. (Agent-initiated escalation was removed 2026-07.)
     app.post("/api/evaluations/:id/tl-action", async (req, res) => {
       const { user_id, action, comment } = req.body; // action: approved / escalated
       const evaluation_id = req.params.id;
 
-      const evaluation = await db.prepare("SELECT agent_id, final_score, qa_id FROM evaluations WHERE id = ?").get(evaluation_id) as any;
+      const evaluation = await db.prepare("SELECT agent_id, final_score, qa_id, status FROM evaluations WHERE id = ?").get(evaluation_id) as any;
       if (!evaluation) return res.status(404).json({ error: "Evaluation not found" });
+
+      if (action === 'escalated') {
+        if (Number(evaluation.final_score) >= 100) {
+          return res.status(400).json({ error: "Full-score calls cannot be escalated." });
+        }
+        if (evaluation.status !== 'Sent to Agent') {
+          return res.status(400).json({ error: "This call is already in or past the escalation cycle." });
+        }
+      }
 
       const newStatus = action === 'approved' ? 'Sent to Agent' : 'Escalated';
 

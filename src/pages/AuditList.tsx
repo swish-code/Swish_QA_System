@@ -99,33 +99,35 @@ export default function AuditList() {
     }
   };
 
-  // An agent may escalate a call only when it's visible to them ('Sent to
-  // Agent'), scored below 100, and has never been escalated before. Calls
-  // already in / past the Leader↔Quality cycle are excluded.
-  const canAgentEscalate = useCallback((audit: Evaluation) => (
-    user?.role === 'agent' &&
+  // Only the Team Leader escalates — on any call scored below 100 that
+  // isn't already in (or past) the Quality review cycle.
+  const canTLEscalate = useCallback((audit: Evaluation) => (
+    user?.role === 'tl' &&
     audit.status === 'Sent to Agent' &&
-    audit.final_score < 100 &&
-    !audit.agent_escalation_status
+    audit.final_score < 100
   ), [user]);
 
   // The "Edited" badge + highlighted row are a QA/supervisor audit signal.
   // Agents and Team Leaders should not see that a call was edited.
   const showEditMarkers = user?.role !== 'agent' && user?.role !== 'tl';
 
-  const submitAgentEscalation = async () => {
+  const submitTLEscalation = async () => {
     if (!escalateTarget || !user?.id) return;
+    if (!escalateReason.trim()) {
+      setEscalateError('Please provide a reason for the escalation.');
+      return;
+    }
     setIsEscalating(true);
     setEscalateError('');
     try {
-      const res = await fetch(`/api/evaluations/${escalateTarget.id}/agent-escalate`, {
+      const res = await fetch(`/api/evaluations/${escalateTarget.id}/tl-action`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_id: user.id, reason: escalateReason.trim() }),
+        body: JSON.stringify({ user_id: user.id, action: 'escalated', comment: escalateReason.trim() }),
       });
       const result = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setEscalateError(result.error || 'Failed to submit escalation request.');
+        setEscalateError(result.error || 'Failed to escalate the call.');
         return;
       }
       setEscalateTarget(null);
@@ -496,10 +498,10 @@ export default function AuditList() {
                   onChange={(e) => setStatusFilter(e.target.value)}
                 >
                   <option value="all">Any Status</option>
-                  <option value="Pending Review">Pending Review</option>
                   <option value="Sent to Agent">Sent to Agent</option>
                   <option value="Escalated">Escalated</option>
-                  <option value="Reevaluated">Reevaluated</option>
+                  <option value="Quality Approved">Quality Approved</option>
+                  <option value="Rejected by Quality">Rejected by Quality</option>
                 </select>
                 <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 dark:text-zinc-600 pointer-events-none" size={12} />
               </div>
@@ -760,34 +762,16 @@ export default function AuditList() {
                            </button>
                          )}
 
-                         {/* Agent escalation (dispute) — button + status badges */}
-                         {canAgentEscalate(audit) && (
+                         {/* TL escalation — sends the call to Quality for re-review */}
+                         {canTLEscalate(audit) && (
                            <button
                              onClick={(e) => { e.stopPropagation(); setEscalateError(''); setEscalateReason(''); setEscalateTarget(audit); }}
-                             className="px-3 py-2 rounded-lg bg-indigo-500/10 border border-indigo-500/30 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-500 hover:text-white hover:border-indigo-500 transition-all flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest"
-                             title="Request a re-review of this call from your Team Leader"
+                             className="px-3 py-2 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-400 hover:bg-rose-500 hover:text-white hover:border-rose-500 transition-all flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest"
+                             title="Escalate this call to Quality for re-review"
                            >
                              <ArrowRightLeft size={14} />
                              <span className="hidden md:inline">Escalate</span>
                            </button>
-                         )}
-                         {user?.role === 'agent' && audit.agent_escalation_status === 'pending' && (
-                           <span
-                             className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest border bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30"
-                             title="Awaiting your Team Leader's decision"
-                           >
-                             <Hourglass size={14} />
-                             <span className="hidden md:inline">Pending</span>
-                           </span>
-                         )}
-                         {user?.role === 'agent' && audit.agent_escalation_status === 'rejected' && (
-                           <span
-                             className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest border bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/30"
-                             title={audit.agent_escalation_response ? `Reason: ${audit.agent_escalation_response}` : 'Your escalation request was rejected'}
-                           >
-                             <X size={14} />
-                             <span className="hidden md:inline">Rejected</span>
-                           </span>
                          )}
 
                          <button
@@ -921,7 +905,7 @@ export default function AuditList() {
         />
       )}
 
-      {/* Agent escalation request modal */}
+      {/* TL escalation modal */}
       {escalateTarget && createPortal(
         <div
           onClick={() => !isEscalating && setEscalateTarget(null)}
@@ -949,16 +933,16 @@ export default function AuditList() {
             </div>
 
             <div className="p-6 space-y-5">
-              <div className="p-4 bg-indigo-50/60 dark:bg-indigo-500/5 rounded-2xl border border-indigo-200 dark:border-indigo-500/20 flex items-start gap-3">
-                <Clock size={16} className="text-indigo-600 dark:text-indigo-400 mt-0.5 shrink-0" />
+              <div className="p-4 bg-rose-50/60 dark:bg-rose-500/5 rounded-2xl border border-rose-200 dark:border-rose-500/20 flex items-start gap-3">
+                <Clock size={16} className="text-rose-600 dark:text-rose-400 mt-0.5 shrink-0" />
                 <p className="text-[11px] text-zinc-600 dark:text-zinc-400 leading-relaxed font-medium">
-                  Your request goes to your <span className="font-black text-zinc-800 dark:text-zinc-200">Team Leader</span>. If approved, the call is sent to Quality for re-review. You can submit only <span className="font-black text-zinc-800 dark:text-zinc-200">one</span> request per call.
+                  This call will be sent to <span className="font-black text-zinc-800 dark:text-zinc-200">Quality</span> for re-review. They will either approve it (and may adjust the score) or reject the escalation. The agent and you are notified of the decision.
                 </p>
               </div>
 
               <div className="space-y-2">
                 <label className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em] block">
-                  Reason <span className="text-zinc-400 normal-case font-bold tracking-normal">(optional, but recommended)</span>
+                  Reason <span className="text-rose-500">(required)</span>
                 </label>
                 <textarea
                   className="w-full min-h-[110px] text-sm resize-none bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-2xl px-4 py-3 text-zinc-800 dark:text-zinc-100 outline-none focus:border-indigo-500 placeholder:text-zinc-400"
@@ -982,11 +966,11 @@ export default function AuditList() {
                   Cancel
                 </button>
                 <button
-                  onClick={submitAgentEscalation}
+                  onClick={submitTLEscalation}
                   disabled={isEscalating}
-                  className="flex-1 px-6 py-3 rounded-2xl font-black text-[10px] uppercase tracking-[0.2em] text-white bg-indigo-600 shadow-lg shadow-indigo-500/20 hover:bg-indigo-500 transition-all disabled:opacity-50"
+                  className="flex-1 px-6 py-3 rounded-2xl font-black text-[10px] uppercase tracking-[0.2em] text-white bg-rose-600 shadow-lg shadow-rose-500/20 hover:bg-rose-500 transition-all disabled:opacity-50"
                 >
-                  {isEscalating ? 'Submitting…' : 'Submit Request'}
+                  {isEscalating ? 'Escalating…' : 'Escalate to Quality'}
                 </button>
               </div>
             </div>
