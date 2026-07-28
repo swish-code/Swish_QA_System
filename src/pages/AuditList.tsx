@@ -519,7 +519,7 @@ export default function AuditList() {
                   <option value="all">All</option>
                   <option value="zero">Zero (0%)</option>
                   <option value="lt90">Less than 90</option>
-                  <option value="lte95">95 or Below</option>
+                  <option value="lt100">Less than 100</option>
                   <option value="gte90">90 or Above</option>
                 </select>
                 <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 dark:text-zinc-600 pointer-events-none" size={12} />

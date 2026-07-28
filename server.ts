@@ -1714,7 +1714,10 @@ async function startServer() {
       } else if (score === 'zero') {
         baseQuery += " AND e.final_score = 0";
       } else if (score === 'lte95') {
+        // kept for old links/bookmarks
         baseQuery += " AND e.final_score <= 95";
+      } else if (score === 'lt100') {
+        baseQuery += " AND e.final_score < 100";
       }
 
       if (from_date) {

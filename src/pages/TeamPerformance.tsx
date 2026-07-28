@@ -113,8 +113,8 @@ export default function TeamPerformance() {
             {stats?.teamPerformance.slice(0, 5).map((member) => (
               <div
                 key={member.id}
-                onClick={() => navigate(`/audits?agent_id=${member.id}&score=lte95&page=1`)}
-                title="View this agent's calls scored 95% or below"
+                onClick={() => navigate(`/audits?agent_id=${member.id}&score=lt100&page=1`)}
+                title="View this agent's calls scored below 100%"
                 className="flex items-center justify-between p-4 bg-zinc-50/50 dark:bg-zinc-950/30 rounded-2xl border border-zinc-100 dark:border-zinc-800/50 group hover:border-indigo-600/30 shadow-sm cursor-pointer"
               >
                 <div className="flex items-center gap-4">
