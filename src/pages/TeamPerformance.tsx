@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { Users, TrendingUp, Target, MessageSquare } from 'lucide-react';
@@ -14,6 +15,7 @@ interface TeamStats {
 
 export default function TeamPerformance() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [stats, setStats] = useState<TeamStats | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -109,7 +111,12 @@ export default function TeamPerformance() {
           </div>
           <div className="space-y-4">
             {stats?.teamPerformance.slice(0, 5).map((member) => (
-              <div key={member.id} className="flex items-center justify-between p-4 bg-zinc-50/50 dark:bg-zinc-950/30 rounded-2xl border border-zinc-100 dark:border-zinc-800/50 group hover:border-indigo-600/30 shadow-sm">
+              <div
+                key={member.id}
+                onClick={() => navigate(`/audits?agent_id=${member.id}&score=lte95&page=1`)}
+                title="View this agent's calls scored 95% or below"
+                className="flex items-center justify-between p-4 bg-zinc-50/50 dark:bg-zinc-950/30 rounded-2xl border border-zinc-100 dark:border-zinc-800/50 group hover:border-indigo-600/30 shadow-sm cursor-pointer"
+              >
                 <div className="flex items-center gap-4">
                   <div className="w-10 h-10 rounded-xl bg-indigo-600/10 border border-indigo-500/20 flex items-center justify-center text-indigo-600 dark:text-indigo-400 font-bold text-xs">
                     {member.name.charAt(0)}

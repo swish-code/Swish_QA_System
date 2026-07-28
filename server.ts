@@ -1700,6 +1700,8 @@ async function startServer() {
         baseQuery += " AND e.final_score >= 90";
       } else if (score === 'zero') {
         baseQuery += " AND e.final_score = 0";
+      } else if (score === 'lte95') {
+        baseQuery += " AND e.final_score <= 95";
       }
 
       if (from_date) {
