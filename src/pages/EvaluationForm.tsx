@@ -900,21 +900,6 @@ export default function EvaluationForm() {
         );
       })()}
 
-      {/* Back — only when viewing an existing call (never on a fresh form,
-          where an accidental click would lose the QA's in-progress work).
-          Returns to the previous page with its full state (filters, page)
-          via history; falls back to /audits when opened directly. */}
-      {id && (
-        <button
-          type="button"
-          onClick={() => ((window.history.state?.idx ?? 0) > 0 ? navigate(-1) : navigate('/audits'))}
-          className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:text-indigo-600 dark:hover:text-indigo-400 hover:border-indigo-300 dark:hover:border-indigo-500/40 transition-all text-[10px] font-black uppercase tracking-widest"
-        >
-          <ArrowLeft size={14} />
-          Back
-        </button>
-      )}
-
       {/* Header Block */}
       <div ref={headerRef} className="flex flex-col md:flex-row justify-between items-start md:items-center bg-white dark:bg-zinc-950/80 p-4 sm:p-6 lg:p-8 rounded-[2rem] border border-zinc-100 dark:border-zinc-800 relative shadow-sm dark:shadow-inner overflow-hidden">
         <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-600/5 blur-[80px] -z-10" />

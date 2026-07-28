@@ -4,14 +4,23 @@ import NotificationBell from './NotificationBell';
 import ThemeToggle from './ThemeToggle';
 import DraftsButton from './DraftsButton';
 import DraftsPanel from './DraftsPanel';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { User, LogOut, Menu } from 'lucide-react';
+import { User, LogOut, Menu, ArrowLeft } from 'lucide-react';
 
 export default function Layout({ children }: { children: React.ReactNode }) {
   const location = useLocation();
+  const navigate = useNavigate();
   const { user, logout } = useAuth();
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+
+  // Global Back — returns to the previous page with its full state (filters,
+  // pagination) via history; falls back to the dashboard when there is no
+  // in-app history (e.g. the page was opened from a direct link).
+  const handleBack = useCallback(() => {
+    if ((window.history.state?.idx ?? 0) > 0) navigate(-1);
+    else navigate('/');
+  }, [navigate]);
 
   // Auto-close mobile sidebar on route change
   useEffect(() => {
@@ -34,6 +43,14 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               aria-label="Open menu"
             >
               <Menu size={20} />
+            </button>
+            <button
+              onClick={handleBack}
+              className="p-2 rounded-xl bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 text-zinc-600 dark:text-zinc-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:border-indigo-300 dark:hover:border-indigo-500/40 transition-all shrink-0"
+              title="Back — returns to the previous page with its filters intact"
+              aria-label="Go back"
+            >
+              <ArrowLeft size={18} />
             </button>
             <div className="flex items-center gap-2 min-w-0">
               <div className="w-[1px] h-4 bg-indigo-500 shrink-0" />
