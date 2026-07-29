@@ -68,6 +68,10 @@ export default function AuditList() {
   const [isLoading, setIsLoading] = useState(true);
   const [isChangingPage, setIsChangingPage] = useState(false);
 
+  // Server-computed average over ALL calls matching the current filters
+  // (not just the visible page).
+  const [avgScore, setAvgScore] = useState(0);
+
   // Evaluation row the TL clicked "Coaching" on — opens the request dialog.
   const [coachingTarget, setCoachingTarget] = useState<Evaluation | null>(null);
   // Evaluation row whose coaching badge was clicked — opens the details modal.
@@ -153,6 +157,7 @@ export default function AuditList() {
       
       setEvaluations(result.data || []);
       setPagination(result.pagination);
+      setAvgScore(Math.round(Number(result.avg_score) || 0));
     } catch (err) {
       console.error(err);
     } finally {
@@ -402,11 +407,8 @@ export default function AuditList() {
     }
   };
 
-  // Memoize average so we don't reduce on every render
-  const averageScore = useMemo(() => {
-    if (evaluations.length === 0) return 0;
-    return Math.round(evaluations.reduce((acc, curr) => acc + curr.final_score, 0) / evaluations.length);
-  }, [evaluations]);
+  // Header Avg comes from the server (`avg_score` on /api/evaluations) — the
+  // true mean of every call matching the filters, stable across pages.
 
   return (
     <div className="space-y-4 max-w-[1400px] mx-auto">
@@ -433,7 +435,7 @@ export default function AuditList() {
             <div className="bg-zinc-50 dark:bg-zinc-900/50 border border-zinc-100 dark:border-zinc-800 px-3 sm:px-4 py-2 rounded-xl flex items-center gap-2 sm:gap-3">
               <p className="text-[9px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest leading-none">Avg</p>
               <p className="text-base sm:text-lg font-black text-indigo-600 dark:text-emerald-500 tracking-tighter leading-none">
-                {averageScore}%
+                {avgScore}%
               </p>
             </div>
             <button

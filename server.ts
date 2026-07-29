@@ -1752,8 +1752,12 @@ async function startServer() {
       }
 
       // Count total items
-      const countResult = await db.prepare(`SELECT COUNT(*) as count ${baseQuery}`).get(...params) as { count: number };
+      // One aggregate pass over the FULL filtered set: total + true average
+      // score (the header Avg used to be computed client-side from just the
+      // visible page, so it changed with pagination).
+      const countResult = await db.prepare(`SELECT COUNT(*) as count, AVG(e.final_score) as avg_score ${baseQuery}`).get(...params) as { count: number; avg_score: any };
       const totalItems = countResult.count;
+      const avgScore = Math.round(Number(countResult.avg_score) || 0);
       const totalPages = Math.ceil(totalItems / limit);
 
       // Get paginated data
@@ -1816,6 +1820,9 @@ async function startServer() {
       const maskQA = role === 'agent' || role === 'tl' || role === 'cc_supervisor';
 
       res.json({
+        // True average over every call matching the current filters —
+        // stable across pages, unlike a per-page computation.
+        avg_score: avgScore,
         data: evals.map((e) => {
           let parsedData = {};
           try { parsedData = typeof e.data === 'string' ? JSON.parse(e.data) : (e.data || {}); } catch {}
