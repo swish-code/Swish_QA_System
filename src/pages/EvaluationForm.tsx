@@ -83,29 +83,8 @@ export default function EvaluationForm() {
   // each successful submit so the next call gets its own key.
   const [clientKey, setClientKey] = useState<string>(() => genClientKey());
 
-  // Early duplicate probe — as soon as agent + customer phone are filled in,
-  // ask the server whether this call looks already registered and show a
-  // warning banner BEFORE the QA spends time scoring it.
+  // Early duplicate probe state — effect lives below formData's declaration.
   const [dupWarning, setDupWarning] = useState<{ id: number; date: string; final_score: number; qa_name: string } | null>(null);
-  useEffect(() => {
-    if (id) { setDupWarning(null); return; } // creation only
-    const digits = String(formData.customer_phone || '').replace(/\D/g, '');
-    if (!formData.agent_id || digits.length < 7) { setDupWarning(null); return; }
-    const t = setTimeout(async () => {
-      try {
-        const qs = new URLSearchParams({
-          agent_id: String(formData.agent_id),
-          date: formData.date || '',
-          phone: digits,
-        });
-        const res = await fetch(`/api/evaluations/check-duplicate?${qs.toString()}`);
-        const j = await res.json();
-        setDupWarning(j?.exists ? j : null);
-      } catch { setDupWarning(null); }
-    }, 500);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [formData.customer_phone, formData.agent_id, formData.date, id]);
   const [isSavingDraft, setIsSavingDraft] = useState(false);
   // Controls the Critical Failure reason picker modal.
   const [showCriticalModal, setShowCriticalModal] = useState(false);
@@ -184,6 +163,29 @@ export default function EvaluationForm() {
   }), [user?.id]);
 
   const [formData, setFormData] = useState<any>(() => buildEmptyForm());
+
+  // Early duplicate probe — as soon as agent + customer phone are filled in,
+  // ask the server whether this call looks already registered and show a
+  // warning banner BEFORE the QA spends time scoring it.
+  useEffect(() => {
+    if (id) { setDupWarning(null); return; } // creation only
+    const digits = String(formData.customer_phone || '').replace(/\D/g, '');
+    if (!formData.agent_id || digits.length < 7) { setDupWarning(null); return; }
+    const t = setTimeout(async () => {
+      try {
+        const qs = new URLSearchParams({
+          agent_id: String(formData.agent_id),
+          date: formData.date || '',
+          phone: digits,
+        });
+        const res = await fetch(`/api/evaluations/check-duplicate?${qs.toString()}`);
+        const j = await res.json();
+        setDupWarning(j?.exists ? j : null);
+      } catch { setDupWarning(null); }
+    }, 500);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formData.customer_phone, formData.agent_id, formData.date, id]);
 
   const [formOptions, setFormOptions] = useState<any>({
     brand: [],
