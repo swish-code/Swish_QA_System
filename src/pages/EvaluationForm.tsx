@@ -82,6 +82,30 @@ export default function EvaluationForm() {
   // Idempotency key for the evaluation being composed; regenerated after
   // each successful submit so the next call gets its own key.
   const [clientKey, setClientKey] = useState<string>(() => genClientKey());
+
+  // Early duplicate probe — as soon as agent + customer phone are filled in,
+  // ask the server whether this call looks already registered and show a
+  // warning banner BEFORE the QA spends time scoring it.
+  const [dupWarning, setDupWarning] = useState<{ id: number; date: string; final_score: number; qa_name: string } | null>(null);
+  useEffect(() => {
+    if (id) { setDupWarning(null); return; } // creation only
+    const digits = String(formData.customer_phone || '').replace(/\D/g, '');
+    if (!formData.agent_id || digits.length < 7) { setDupWarning(null); return; }
+    const t = setTimeout(async () => {
+      try {
+        const qs = new URLSearchParams({
+          agent_id: String(formData.agent_id),
+          date: formData.date || '',
+          phone: digits,
+        });
+        const res = await fetch(`/api/evaluations/check-duplicate?${qs.toString()}`);
+        const j = await res.json();
+        setDupWarning(j?.exists ? j : null);
+      } catch { setDupWarning(null); }
+    }, 500);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formData.customer_phone, formData.agent_id, formData.date, id]);
   const [isSavingDraft, setIsSavingDraft] = useState(false);
   // Controls the Critical Failure reason picker modal.
   const [showCriticalModal, setShowCriticalModal] = useState(false);
@@ -1051,6 +1075,28 @@ export default function EvaluationForm() {
             <h4 className="text-sm font-black text-amber-500 uppercase tracking-widest">Read Only Mode</h4>
             <p className="text-[10px] text-zinc-400 font-medium">This interaction has been finalized and cannot be modified.</p>
           </div>
+        </div>
+      )}
+
+      {/* Duplicate warning — live probe result while composing a new call */}
+      {!id && dupWarning && (
+        <div className="flex flex-col sm:flex-row sm:items-center gap-4 p-5 bg-amber-50 dark:bg-amber-500/10 border border-amber-300 dark:border-amber-500/30 rounded-2xl">
+          <AlertCircle className="text-amber-500 shrink-0" size={24} />
+          <div className="flex-1 min-w-0">
+            <h4 className="text-sm font-black text-amber-600 dark:text-amber-400 uppercase tracking-widest">This call looks already registered</h4>
+            <p className="text-[11px] text-zinc-600 dark:text-zinc-400 font-medium mt-1">
+              Call <span className="font-black">#{dupWarning.id}</span> — same agent &amp; customer phone — registered by{' '}
+              <span className="font-black">{dupWarning.qa_name || 'QA'}</span> on {dupWarning.date} with a score of {dupWarning.final_score}%.
+              Make sure you are not evaluating the same call twice.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => navigate(`/evaluate/${dupWarning.id}`)}
+            className="shrink-0 px-4 py-2.5 rounded-xl bg-amber-500 text-white font-black text-[10px] uppercase tracking-widest shadow-lg shadow-amber-500/20 hover:bg-amber-400 transition-all"
+          >
+            Open Call #{dupWarning.id}
+          </button>
         </div>
       )}
 

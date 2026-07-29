@@ -1864,6 +1864,34 @@ async function startServer() {
       });
     });
 
+    // Early duplicate probe — the form calls this as soon as the QA picks an
+    // agent and types the customer phone, so a "looks already registered"
+    // banner shows BEFORE they invest time scoring the call. Matches on the
+    // last 8 digits of the phone (immune to +965 / spacing differences) for
+    // the same agent, on the same typed call date OR registered in the last
+    // 48h by ANY evaluator (catches a second QA grading the same call).
+    app.get("/api/evaluations/check-duplicate", async (req, res) => {
+      try {
+        const { agent_id, date, phone } = req.query;
+        const digits = String(phone || '').replace(/\D/g, '');
+        if (!agent_id || digits.length < 7) return res.json({ exists: false });
+        const key = digits.slice(-8);
+        const row = await db.prepare(`
+          SELECT e.id, e.date, e.final_score, q.display_name AS qa_name
+          FROM evaluations e
+          LEFT JOIN users q ON e.qa_id = q.id
+          WHERE e.agent_id = ?
+            AND RIGHT(regexp_replace(COALESCE(e.data->>'customer_phone', ''), '[^0-9]', '', 'g'), 8) = ?
+            AND (e.date = ? OR e.created_at >= NOW() - INTERVAL '48 hours')
+          ORDER BY e.id DESC LIMIT 1
+        `).get(agent_id, key, date || '') as any;
+        res.json(row ? { exists: true, id: row.id, date: row.date, final_score: row.final_score, qa_name: row.qa_name } : { exists: false });
+      } catch (e: any) {
+        // Probe is advisory — never block the form on a probe failure.
+        res.json({ exists: false });
+      }
+    });
+
     app.post("/api/evaluations", async (req, res) => {
       const { date, agent_id, qa_id, final_score, critical_failure, data, draft_id, is_wow, client_key, force_duplicate } = req.body;
 
@@ -1879,19 +1907,22 @@ async function startServer() {
       // registered → ask the QA to confirm (client re-sends with
       // force_duplicate) instead of silently creating a twin.
       if (!force_duplicate) {
-        const phone = String(data?.customer_phone || '').trim();
-        if (phone) {
+        // Digits-only match on the last 8 digits so formatting differences
+        // (+965 prefix, spaces, dashes) can't slip past the check.
+        const digits = String(data?.customer_phone || '').replace(/\D/g, '');
+        if (digits.length >= 7) {
           const dup = await db.prepare(
             `SELECT id FROM evaluations
-             WHERE agent_id = ? AND date = ?
-               AND TRIM(COALESCE(data->>'customer_phone', '')) = ?
+             WHERE agent_id = ?
+               AND RIGHT(regexp_replace(COALESCE(data->>'customer_phone', ''), '[^0-9]', '', 'g'), 8) = ?
+               AND (date = ? OR created_at >= NOW() - INTERVAL '48 hours')
              ORDER BY id DESC LIMIT 1`
-          ).get(agent_id, date, phone) as any;
+          ).get(agent_id, digits.slice(-8), date) as any;
           if (dup) {
             return res.status(409).json({
               duplicate: true,
               existing_id: dup.id,
-              error: `A call for this agent, date and customer phone is already registered as call #${dup.id}.`,
+              error: `A call for this agent and customer phone is already registered as call #${dup.id}.`,
             });
           }
         }
