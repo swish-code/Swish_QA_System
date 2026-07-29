@@ -1707,14 +1707,20 @@ async function startServer() {
       }
 
       // Score band filter — works alongside every other filter.
-      if (score === 'lt90') {
+      // The dropdown offers three buckets covering every call exactly once:
+      //   zero (=0) · mid (between 0 and 100 exclusive) · full (=100)
+      if (score === 'zero') {
+        baseQuery += " AND e.final_score = 0";
+      } else if (score === 'full') {
+        baseQuery += " AND e.final_score = 100";
+      } else if (score === 'mid') {
+        baseQuery += " AND e.final_score > 0 AND e.final_score < 100";
+      } else if (score === 'lt90') {
+        // legacy values kept for old links/bookmarks
         baseQuery += " AND e.final_score < 90";
       } else if (score === 'gte90') {
         baseQuery += " AND e.final_score >= 90";
-      } else if (score === 'zero') {
-        baseQuery += " AND e.final_score = 0";
       } else if (score === 'lte95') {
-        // kept for old links/bookmarks
         baseQuery += " AND e.final_score <= 95";
       } else if (score === 'lt100') {
         baseQuery += " AND e.final_score < 100";
