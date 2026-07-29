@@ -29,7 +29,8 @@ import {
   Hourglass,
   Pencil,
   History,
-  FileSpreadsheet
+  FileSpreadsheet,
+  Phone
 } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Evaluation } from '../types';
@@ -370,6 +371,7 @@ export default function AuditList() {
         'Brand': a.brand || '',
         'Call Type': a.call_type || '',
         'Date': a.date || '',
+        'Customer Phone': a.data?.customer_phone || '',
         'Score': `${a.final_score}%`,
         'Status': a.status || '',
         'Coaching': a.coaching ? a.coaching.status : 'Not Coached',
@@ -659,6 +661,14 @@ export default function AuditList() {
                           <Calendar size={12} className="text-zinc-400 dark:text-zinc-600" />
                           <span className="text-[11px] font-medium tracking-tight whitespace-nowrap">{audit.date}</span>
                         </div>
+                        {(audit.data as any)?.customer_phone && (
+                          <div className="flex items-center gap-2 text-zinc-500 dark:text-zinc-400">
+                            <Phone size={12} className="text-zinc-400 dark:text-zinc-600" />
+                            <span className="text-[11px] font-medium tracking-tight whitespace-nowrap tabular-nums" title="Customer phone">
+                              {(audit.data as any).customer_phone}
+                            </span>
+                          </div>
+                        )}
                       </div>
                     </td>
                     <td className="px-8 py-6">
