@@ -224,6 +224,12 @@ async function startServer() {
     // it explicitly on INSERT; pre-existing rows are backfilled once from the
     // call date below (idempotent — only touches NULLs).
     try { await db.exec("ALTER TABLE evaluations ADD COLUMN IF NOT EXISTS created_at TIMESTAMP"); } catch(e) {}
+
+    // Duplicate-submission guard: the form generates one client_key per
+    // evaluation; a unique index makes a re-sent request (double-click,
+    // network retry, lost response) land on the SAME row instead of a twin.
+    try { await db.exec("ALTER TABLE evaluations ADD COLUMN IF NOT EXISTS client_key TEXT"); } catch(e) {}
+    try { await db.exec("CREATE UNIQUE INDEX IF NOT EXISTS evaluations_client_key_uq ON evaluations (client_key) WHERE client_key IS NOT NULL"); } catch(e) {}
     try { await db.exec("UPDATE evaluations SET created_at = date::timestamp WHERE created_at IS NULL AND date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'"); } catch(e) {}
     await db.exec(`
       CREATE TABLE IF NOT EXISTS evaluation_edits (
@@ -1859,7 +1865,37 @@ async function startServer() {
     });
 
     app.post("/api/evaluations", async (req, res) => {
-      const { date, agent_id, qa_id, final_score, critical_failure, data, draft_id, is_wow } = req.body;
+      const { date, agent_id, qa_id, final_score, critical_failure, data, draft_id, is_wow, client_key, force_duplicate } = req.body;
+
+      // Idempotency: the form sends one client_key per evaluation. If a row
+      // with this key already exists, the client is retrying (double-click,
+      // network retry, lost response) — return the existing row, insert nothing.
+      if (client_key) {
+        const existing = await db.prepare("SELECT id FROM evaluations WHERE client_key = ?").get(client_key) as any;
+        if (existing) return res.json({ success: true, id: existing.id, deduped: true });
+      }
+
+      // Soft duplicate check: same agent + call date + customer phone already
+      // registered → ask the QA to confirm (client re-sends with
+      // force_duplicate) instead of silently creating a twin.
+      if (!force_duplicate) {
+        const phone = String(data?.customer_phone || '').trim();
+        if (phone) {
+          const dup = await db.prepare(
+            `SELECT id FROM evaluations
+             WHERE agent_id = ? AND date = ?
+               AND TRIM(COALESCE(data->>'customer_phone', '')) = ?
+             ORDER BY id DESC LIMIT 1`
+          ).get(agent_id, date, phone) as any;
+          if (dup) {
+            return res.status(409).json({
+              duplicate: true,
+              existing_id: dup.id,
+              error: `A call for this agent, date and customer phone is already registered as call #${dup.id}.`,
+            });
+          }
+        }
+      }
 
       // Persist the canonical option casing regardless of what the client
       // sent — prevents the "MISHMASH vs Mishmash" split at the source.
@@ -1871,8 +1907,20 @@ async function startServer() {
       // can escalate any call scored below 100 directly (tl-action).
       const status = 'Sent to Agent';
 
-      const result = await db.prepare("INSERT INTO evaluations (date, agent_id, qa_id, brand, call_type, final_score, critical_failure, data, status, is_wow, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)")
-        .run(date, agent_id, qa_id, brand, call_type, final_score, critical_failure ? 1 : 0, JSON.stringify(data), status, is_wow ? 1 : 0);
+      let result;
+      try {
+        result = await db.prepare("INSERT INTO evaluations (date, agent_id, qa_id, brand, call_type, final_score, critical_failure, data, status, is_wow, client_key, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)")
+          .run(date, agent_id, qa_id, brand, call_type, final_score, critical_failure ? 1 : 0, JSON.stringify(data), status, is_wow ? 1 : 0, client_key || null);
+      } catch (err: any) {
+        // Unique-index race: two simultaneous submits with the same key —
+        // the second lands here; hand back the row the first one created.
+        if (client_key) {
+          const existing = await db.prepare("SELECT id FROM evaluations WHERE client_key = ?").get(client_key) as any;
+          if (existing) return res.json({ success: true, id: existing.id, deduped: true });
+        }
+        console.error("Evaluation insert failed:", err);
+        return res.status(500).json({ error: "Failed to save the evaluation. Please try again." });
+      }
 
       const evaluation_id = result.lastInsertRowid;
 

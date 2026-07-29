@@ -63,6 +63,13 @@ const CATEGORY_TONES: Record<string, string> = {
   NON: 'bg-zinc-500/10 text-zinc-600 dark:text-zinc-400 border-zinc-500/30',
 };
 
+// Unique id for one evaluation submission — the server dedupes on it, so a
+// re-sent request can never create a duplicate row.
+const genClientKey = () =>
+  (typeof crypto !== 'undefined' && 'randomUUID' in crypto)
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
 export default function EvaluationForm() {
   const { user } = useAuth();
   const { id } = useParams();
@@ -72,6 +79,9 @@ export default function EvaluationForm() {
   const [agents, setAgents] = useState<UserType[]>([]);
   const [escalationHistory, setEscalationHistory] = useState<any[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // Idempotency key for the evaluation being composed; regenerated after
+  // each successful submit so the next call gets its own key.
+  const [clientKey, setClientKey] = useState<string>(() => genClientKey());
   const [isSavingDraft, setIsSavingDraft] = useState(false);
   // Controls the Critical Failure reason picker modal.
   const [showCriticalModal, setShowCriticalModal] = useState(false);
@@ -549,7 +559,12 @@ export default function EvaluationForm() {
     }
   };
 
-  const handleSubmit = async () => {
+  const handleSubmit = async (forceDuplicate?: boolean) => {
+    // Re-entry guard — the disabled attribute only takes effect after the
+    // next render, so a fast double-click could fire this twice and create
+    // duplicate evaluations. This closes that window.
+    if (isSubmitting) return;
+
     if (!formData.agent_id) {
       alert('Please select an agent.');
       return;
@@ -579,6 +594,12 @@ export default function EvaluationForm() {
       // When submitting from a restored draft, the server marks that draft
       // as 'completed' so it disappears from the side panel.
       draft_id: activeDraftId || undefined,
+      // Idempotency: one key per evaluation — if the request is re-sent
+      // (double-click, retry, lost response) the server returns the row it
+      // already created instead of inserting a duplicate.
+      client_key: isCreation ? clientKey : undefined,
+      // Set after the QA confirms the "already registered" warning.
+      force_duplicate: forceDuplicate === true || undefined,
       data: {
         ...formData,
         responses: formData.responses
@@ -606,6 +627,9 @@ export default function EvaluationForm() {
         if (activeDraftId) notifyDraftsChanged();
         alert(`Evaluation ${isCreation ? 'submitted' : 'updated'} successfully! Final Score: ${score}%`);
 
+        // Fresh idempotency key for the NEXT evaluation.
+        setClientKey(genClientKey());
+
         // QA logging a NEW call: reset the form and stay so they can log the
         // next call immediately, instead of bouncing to the dashboard. Edits
         // and escalation reviews keep their existing navigation.
@@ -623,9 +647,25 @@ export default function EvaluationForm() {
         } else {
           navigate(isCreation ? '/' : '/audits');
         }
+      } else {
+        // Explicit failure feedback — the old silent path left the QA
+        // guessing whether the call saved, and retries created duplicates.
+        const body = await res.json().catch(() => ({} as any));
+        if (res.status === 409 && body.duplicate) {
+          const again = window.confirm(
+            `${body.error || 'A similar call is already registered.'}\n\nSubmit it anyway as a separate evaluation?`
+          );
+          if (again) {
+            setIsSubmitting(false);
+            return handleSubmit(true);
+          }
+        } else {
+          alert(body.error || `Saving failed (HTTP ${res.status}). The call was NOT saved — please try again.`);
+        }
       }
     } catch (err) {
       console.error(err);
+      alert('Could not reach the server, so the save is UNCONFIRMED. Check your connection and press Submit again — the system will not create a duplicate.');
     } finally {
       setIsSubmitting(false);
     }
@@ -1385,7 +1425,7 @@ export default function EvaluationForm() {
          {/* QA Initial Submit */}
          {!id && (user?.role === 'qa' || user?.role === 'supervisor') && (
            <button
-             onClick={handleSubmit}
+             onClick={() => handleSubmit()}
              disabled={isSubmitting}
              className="px-12 py-4 rounded-2xl bg-emerald-600 text-white font-black text-[10px] uppercase tracking-[0.2em] shadow-2xl shadow-emerald-500/20 hover:bg-emerald-500 transition-all flex items-center gap-3 disabled:opacity-50"
            >
@@ -1396,7 +1436,7 @@ export default function EvaluationForm() {
          {/* QA Edit — save changes to an existing call (change-tracked) */}
          {isQaEdit && (
            <button
-             onClick={handleSubmit}
+             onClick={() => handleSubmit()}
              disabled={isSubmitting}
              className="px-12 py-4 rounded-2xl bg-indigo-600 text-white font-black text-[10px] uppercase tracking-[0.2em] shadow-2xl shadow-indigo-500/20 hover:bg-indigo-500 transition-all flex items-center gap-3 disabled:opacity-50"
            >
