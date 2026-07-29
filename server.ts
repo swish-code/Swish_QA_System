@@ -1733,9 +1733,20 @@ async function startServer() {
       if (search) {
         // ILIKE = case-insensitive match (PG's LIKE is case-sensitive, which
         // forced users to type names with exact capitalization).
-        baseQuery += " AND (a.display_name ILIKE ? OR e.brand ILIKE ? OR e.call_type ILIKE ?)";
-        const searchPattern = `%${search}%`;
-        params.push(searchPattern, searchPattern, searchPattern);
+        // Also matches the call id and the customer phone. For those two we
+        // use a digits-only variant of the term (so "#3104" finds call 3104
+        // and "+965 5160" finds the phone), and strip spaces/dashes from the
+        // stored phone before comparing.
+        const raw = String(search).trim();
+        const searchPattern = `%${raw}%`;
+        const digits = raw.replace(/\D/g, '');
+        const digitsPattern = digits ? `%${digits}%` : searchPattern;
+        baseQuery += ` AND (
+          a.display_name ILIKE ? OR e.brand ILIKE ? OR e.call_type ILIKE ?
+          OR CAST(e.id AS TEXT) LIKE ?
+          OR REPLACE(REPLACE(COALESCE(e.data->>'customer_phone', ''), ' ', ''), '-', '') ILIKE ?
+        )`;
+        params.push(searchPattern, searchPattern, searchPattern, digitsPattern, digitsPattern);
       }
 
       // WOW Calls filter — drives the dedicated /wow-calls page.

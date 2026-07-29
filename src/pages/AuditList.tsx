@@ -552,7 +552,7 @@ export default function AuditList() {
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400 dark:text-zinc-600" size={12} />
                 <input
                   type="text"
-                  placeholder="Brand, type..."
+                  placeholder="Brand, phone, call #..."
                   className="w-full bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg pl-7 pr-3 py-2 text-xs text-zinc-800 dark:text-zinc-100 outline-none focus:border-indigo-500 placeholder:text-zinc-400"
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
