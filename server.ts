@@ -2006,13 +2006,16 @@ async function startServer() {
       // trail (who changed what, when). Skipped silently if the row vanished.
       const before = await db.prepare("SELECT * FROM evaluations WHERE id = ?").get(evaluation_id) as any;
 
-      // Authorization: a QA may only edit calls they created. Supervisors may
-      // edit any. Enforced here so the hidden pencil can't be bypassed by
+      // Authorization: editing a submitted call is supervisor-only — a QA
+      // cannot amend an audit after submitting it, not even their own. The one
+      // exception is escalation review: while a call sits in 'Escalated', the
+      // Quality side is expected to rework the score before approving or
+      // rejecting it. Enforced here so the hidden pencil can't be bypassed by
       // calling the API directly. Other flows (no editor_id) are unaffected.
       if (editor_id && before) {
         const editor = await db.prepare("SELECT role FROM users WHERE id = ?").get(editor_id) as any;
-        if (editor?.role === 'qa' && Number(before.qa_id) !== Number(editor_id)) {
-          return res.status(403).json({ error: "You can only edit calls you created." });
+        if (editor?.role !== 'supervisor' && before.status !== 'Escalated') {
+          return res.status(403).json({ error: "Only a supervisor can edit a submitted call." });
         }
       }
 

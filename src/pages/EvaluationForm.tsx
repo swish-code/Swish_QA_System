@@ -372,10 +372,11 @@ export default function EvaluationForm() {
   // any call, but a QA only their own; the save is change-tracked. A QA who
   // deep-links ?edit=1 to another QA's call stays read-only (and the server
   // rejects the write anyway).
-  const isQaEdit = !!id && searchParams.get('edit') === '1' && (
-    user?.role === 'supervisor' ||
-    (user?.role === 'qa' && Number(formData.qa_id) === Number(user?.id))
-  );
+  // Post-submission editing is supervisor-only. A QA cannot amend a call
+  // after submitting it — not even their own. QAs still adjust a call during
+  // escalation review, which is handled by the separate 'Escalated' branch
+  // below (and by the qa-action endpoint), not by this edit mode.
+  const isQaEdit = !!id && searchParams.get('edit') === '1' && user?.role === 'supervisor';
 
   const isReadOnly = id && !(
     (formData.status === 'Escalated' && (user?.role === 'qa' || user?.role === 'supervisor')) ||
