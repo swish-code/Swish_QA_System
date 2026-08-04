@@ -1,16 +1,17 @@
 import React, { useState, useEffect } from 'react';
+import * as XLSX from 'xlsx';
 import { useAuth } from '../context/AuthContext';
 import { NavLink, useNavigate } from 'react-router-dom';
 import StatCard from '../components/StatCard';
 import QACallsCard from '../components/QACallsCard';
 import AttendanceWidget from '../components/AttendanceWidget';
 import { motion } from 'motion/react';
-import { 
-  TrendingUp, 
-  Users, 
-  FileCheck, 
-  AlertCircle, 
-  Trophy, 
+import {
+  TrendingUp,
+  Users,
+  FileCheck,
+  AlertCircle,
+  Trophy,
   Target,
   ArrowUpRight,
   Clock,
@@ -20,7 +21,8 @@ import {
   XCircle,
   Hourglass,
   Calendar,
-  X
+  X,
+  FileSpreadsheet
 } from 'lucide-react';
 import { 
   AreaChart, 
@@ -70,6 +72,7 @@ export default function Dashboard() {
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
   const [preset, setPreset] = useState('all');
+  const [isExporting, setIsExporting] = useState(false);
 
   const applyPreset = (key: string) => {
     const today = new Date();
@@ -116,6 +119,55 @@ export default function Dashboard() {
     };
     if (user) fetchData();
   }, [user, fromDate, toDate]);
+
+  // Exports everything currently on screen — same date-filtered `stats` the
+  // cards render from — as a multi-sheet workbook, not just the KPI numbers.
+  const handleExport = () => {
+    setIsExporting(true);
+    try {
+      const wb = XLSX.utils.book_new();
+      const range = fromDate || toDate ? `${fromDate || '…'} to ${toDate || '…'}` : 'All time';
+
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet([
+        { Metric: 'Date Range', Value: range },
+        { Metric: 'Avg Quality Score', Value: `${stats?.avgScore ?? 0}%` },
+        { Metric: 'Total Audits', Value: stats?.totalAudits ?? 0 },
+        { Metric: 'Critical Failures', Value: stats?.criticalFailures ?? 0 },
+        { Metric: 'Active Agents', Value: stats?.activeAgents ?? 0 },
+        { Metric: 'Escalated by TL', Value: stats?.escalations?.escalated ?? 0 },
+        { Metric: 'Quality Approved', Value: stats?.escalations?.qualityApproved ?? 0 },
+        { Metric: 'Quality Rejected', Value: stats?.escalations?.qualityRejected ?? 0 },
+        { Metric: 'Pending Quality', Value: stats?.escalations?.pendingQuality ?? 0 },
+      ]), 'Summary');
+
+      if (user?.role === 'agent') {
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(
+          (stats?.painPoints || []).map((p: any) => ({ 'Focus Area': p.label, Hits: p.count }))
+        ), 'Focus Areas');
+      } else {
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(
+          (stats?.topPerformers || []).map((p: any, i: number) => ({ Rank: i + 1, Agent: p.name, Score: `${p.score}%`, 'Calls Graded': p.count }))
+        ), 'Top Performers');
+      }
+
+      if (user?.role !== 'agent') {
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(
+          (stats?.escalationsByTL || []).map((t: any) => ({ 'Team Leader': t.name, 'Calls Escalated': t.escalated }))
+        ), 'Escalations by TL');
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(
+          (stats?.responsesByQA || []).map((q: any) => ({ 'Quality Member': q.name, Approved: q.approved, Rejected: q.rejected }))
+        ), 'Quality Responses');
+      }
+
+      const stamp = new Date().toISOString().slice(0, 10);
+      XLSX.writeFile(wb, `dashboard-${stamp}.xlsx`);
+    } catch (err) {
+      console.error(err);
+      alert('Export failed. Please try again.');
+    } finally {
+      setIsExporting(false);
+    }
+  };
 
   if (isLoading) {
     return (
@@ -179,6 +231,16 @@ export default function Dashboard() {
               </button>
             )}
           </div>
+
+          <button
+            onClick={handleExport}
+            disabled={isExporting || !stats}
+            className="bg-emerald-600 text-white px-4 py-2 rounded-xl flex items-center gap-2 text-[11px] font-bold uppercase tracking-widest shadow-lg shadow-emerald-500/20 hover:bg-emerald-500 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+            title="Export the current dashboard (respecting the date range above) to Excel"
+          >
+            <FileSpreadsheet size={14} />
+            {isExporting ? 'Exporting…' : 'Export to Excel'}
+          </button>
         </div>
       </div>
 
