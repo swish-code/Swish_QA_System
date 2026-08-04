@@ -1,22 +1,24 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
+import * as XLSX from 'xlsx';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { motion, AnimatePresence } from 'motion/react';
-import { 
-  Bell, 
-  History, 
-  CheckCircle2, 
-  XCircle, 
-  MessageSquare, 
-  ChevronRight, 
-  User, 
+import {
+  Bell,
+  History,
+  CheckCircle2,
+  XCircle,
+  MessageSquare,
+  ChevronRight,
+  User,
   Clock,
   ArrowRightLeft,
   Search,
   Filter,
   Eye,
-  AlertTriangle
+  AlertTriangle,
+  FileSpreadsheet
 } from 'lucide-react';
 
 interface EscalationLog {
@@ -60,6 +62,7 @@ export default function EscalationManagement() {
   const [responseComment, setResponseComment] = useState('');
   const [showResponseModal, setShowResponseModal] = useState(false);
   const [modalAction, setModalAction] = useState<'approved' | 'rejected'>('approved');
+  const [isExporting, setIsExporting] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -135,6 +138,61 @@ export default function EscalationManagement() {
     }
   };
 
+  // Exports everything on this page — not just the active tab — as a
+  // two-sheet workbook, fetched fresh so it's complete regardless of what's
+  // currently loaded in state.
+  const handleExport = async () => {
+    setIsExporting(true);
+    try {
+      const [pendingRes, historyRes] = await Promise.all([
+        fetch(`/api/evaluations?user_id=${user?.id}&role=${user?.role}&limit=500&page=1`),
+        fetch('/api/escalations/history'),
+      ]);
+      const pendingData = (await pendingRes.json()).data || [];
+      const pendingRows = pendingData
+        .filter((e: Evaluation) => e.status === 'Escalated')
+        .map((e: Evaluation) => ({
+          'Call #': e.id,
+          Agent: e.agent_name,
+          Evaluator: e.qa_name,
+          Brand: e.brand,
+          'Call Type': e.call_type,
+          Date: e.date,
+          Score: e.final_score,
+          Status: e.status,
+        }));
+
+      const historyLogs: EscalationLog[] = await historyRes.json();
+      const historyRows = historyLogs
+        .slice()
+        .sort((a, b) => a.evaluation_id - b.evaluation_id || new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+        .map(l => ({
+          'Call #': l.evaluation_id,
+          Brand: l.brand || '',
+          'Call Type': l.call_type || '',
+          'Call Date': l.evaluation_date || '',
+          Actor: l.user_name,
+          Role: l.role,
+          Action: l.action,
+          Comment: l.comment || '',
+          'Old Score': l.old_score ?? '',
+          'New Score': l.new_score ?? '',
+          Timestamp: l.created_at,
+        }));
+
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(pendingRows), 'Pending Escalations');
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(historyRows), 'History Log');
+      const stamp = new Date().toISOString().slice(0, 10);
+      XLSX.writeFile(wb, `escalations-${stamp}.xlsx`);
+    } catch (err) {
+      console.error(err);
+      alert('Export failed. Please try again.');
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   const handleRespond = async () => {
     if (modalAction === 'rejected' && !responseComment.trim()) {
       alert('Please provide a reason for rejection.');
@@ -174,22 +232,34 @@ export default function EscalationManagement() {
           <h2 className="text-2xl sm:text-3xl font-light text-zinc-900 dark:text-white tracking-tight mb-1">Escalation Management</h2>
           <p className="text-zinc-500 text-sm">Review, approve, or reject disputed interactions and track audit history.</p>
         </div>
-        <div className="flex bg-zinc-50 dark:bg-zinc-950 p-1 rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-xl">
-          <button 
-            onClick={() => setActiveTab('pending')}
-            className={`px-6 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${
-              activeTab === 'pending' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20' : 'text-zinc-400 dark:text-zinc-500 hover:text-indigo-600 dark:hover:text-zinc-300'
-            }`}
+        <div className="flex items-center gap-3">
+          <div className="flex bg-zinc-50 dark:bg-zinc-950 p-1 rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-xl">
+            <button
+              onClick={() => setActiveTab('pending')}
+              className={`px-6 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${
+                activeTab === 'pending' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20' : 'text-zinc-400 dark:text-zinc-500 hover:text-indigo-600 dark:hover:text-zinc-300'
+              }`}
+            >
+              Pending Review
+            </button>
+            <button
+              onClick={() => setActiveTab('history')}
+              className={`px-6 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${
+                activeTab === 'history' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20' : 'text-zinc-400 dark:text-zinc-500 hover:text-indigo-600 dark:hover:text-zinc-300'
+              }`}
+            >
+              History Log
+            </button>
+          </div>
+
+          <button
+            onClick={handleExport}
+            disabled={isExporting}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-emerald-600 text-white text-xs font-black uppercase tracking-widest shadow-lg shadow-emerald-500/20 hover:bg-emerald-500 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            title="Export both pending escalations and the full history log to Excel"
           >
-            Pending Review
-          </button>
-          <button 
-            onClick={() => setActiveTab('history')}
-            className={`px-6 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${
-              activeTab === 'history' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20' : 'text-zinc-400 dark:text-zinc-500 hover:text-indigo-600 dark:hover:text-zinc-300'
-            }`}
-          >
-            History Log
+            <FileSpreadsheet size={14} />
+            {isExporting ? 'Exporting…' : 'Export to Excel'}
           </button>
         </div>
       </div>
