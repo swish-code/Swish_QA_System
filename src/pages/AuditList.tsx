@@ -364,18 +364,68 @@ export default function AuditList() {
       const result = await res.json();
       const data: Evaluation[] = result.data || [];
 
-      const rows = data.map((a: any) => ({
-        'Call #': a.id,
-        'Agent': a.agent_name || '',
-        'Agent #': a.agent_id,
-        'Brand': a.brand || '',
-        'Call Type': a.call_type || '',
-        'Date': a.date || '',
-        'Customer Phone': a.data?.customer_phone || '',
-        'Score': `${a.final_score}%`,
-        'Status': a.status || '',
-        'Coaching': a.coaching ? a.coaching.status : 'Not Coached',
-      }));
+      // Every scored attribute that appears on ANY call in this export gets
+      // its own column (label from questionMap, falling back to the raw id
+      // if the question was later renamed/removed), so the sheet captures
+      // the full scorecard breakdown — not just the roll-up score.
+      const questionIdsInExport = new Set<string>();
+      data.forEach((a: any) => {
+        const responses = (a.data as any)?.responses || {};
+        Object.keys(responses).forEach(qid => questionIdsInExport.add(qid));
+      });
+      const orderedQuestionIds = Array.from(questionIdsInExport).sort(
+        (x, y) => (questionMap[y]?.weight || 0) - (questionMap[x]?.weight || 0)
+      );
+
+      const rows = data.map((a: any) => {
+        const d = (a.data as any) || {};
+        const responses = d.responses || {};
+
+        const row: Record<string, any> = {
+          'Call #': a.id,
+          'Agent': a.agent_name || '',
+          'Agent #': a.agent_id,
+          'Evaluator (QA)': a.qa_name || '',
+          'Brand': a.brand || '',
+          'Call Type': a.call_type || '',
+          'Call Direction': d.call_direction || '',
+          'Date': a.date || '',
+          'Registered On': a.created_at || '',
+          'Customer Phone': d.customer_phone || '',
+          'Call Duration': d.call_duration || '',
+          'Score': a.final_score,
+          'Status': a.status || '',
+          'Critical Failure': a.critical_failure ? 'Yes' : 'No',
+          'Critical Failure Reasons': Array.isArray(d.critical_failure_reasons) ? d.critical_failure_reasons.join('; ') : '',
+          'WOW Call': a.is_wow ? 'Yes' : 'No',
+          'Common Issues': Array.isArray(d.common_issues) ? d.common_issues.join('; ') : '',
+          'Error Classification': d.error_classification || '',
+        };
+
+        // One column per scorecard attribute (Yes / No / N/A / — if not
+        // applicable to this call's call_type).
+        orderedQuestionIds.forEach(qid => {
+          const label = questionMap[qid]?.label || `Question #${qid}`;
+          row[label] = responses[qid] || '—';
+        });
+
+        // Free-text QA feedback sections.
+        row['QA Comment (General)'] = d.feedback?.general || '';
+        row['QA Comment (Internal)'] = d.feedback?.internal || '';
+        row['QA Comment (Process)'] = d.feedback?.process || '';
+        row['QA Comment (Problem Solving)'] = d.feedback?.problem_solving || '';
+        row['QA Comment (Empathy)'] = d.feedback?.empathy || '';
+        row['QA Comment (Efficiency)'] = d.feedback?.efficiency || '';
+        row['Error Description'] = d.feedback?.error_description || '';
+
+        row['Coaching Status'] = a.coaching ? a.coaching.status : 'Not Coached';
+        row['Coaching TL'] = a.coaching?.tl_name || '';
+        row['Coaching Comment'] = a.coaching?.tl_comment || '';
+        row['Last Edited By'] = a.last_editor_name || '';
+        row['Last Edited At'] = a.last_edited_at || '';
+
+        return row;
+      });
 
       const ws = XLSX.utils.json_to_sheet(rows);
       const wb = XLSX.utils.book_new();
