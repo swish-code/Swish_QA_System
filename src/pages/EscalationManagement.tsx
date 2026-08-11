@@ -42,6 +42,7 @@ interface Evaluation {
   date: string;
   agent_name: string;
   qa_name: string;
+  qa_id?: number;
   brand: string;
   call_type: string;
   final_score: number;
@@ -289,6 +290,14 @@ export default function EscalationManagement() {
                        }`}>
                          {esc.status}
                        </div>
+                       {user?.role === 'qa' && Number(esc.qa_id) === Number(user?.id) && (
+                         <div
+                           className="px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-widest bg-amber-500/10 border border-amber-500/20 text-amber-600 dark:text-amber-500"
+                           title="You created this call — another QA or a Supervisor must resolve it"
+                         >
+                           Your Call
+                         </div>
+                       )}
                     </div>
                     <div className="flex items-center gap-4 text-[10px] font-bold text-zinc-400 dark:text-zinc-500 uppercase tracking-[0.15em]">
                       <div className="flex items-center gap-1.5">

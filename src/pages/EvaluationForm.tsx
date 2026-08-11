@@ -378,12 +378,18 @@ export default function EvaluationForm() {
   // below (and by the qa-action endpoint), not by this edit mode.
   const isQaEdit = !!id && searchParams.get('edit') === '1' && user?.role === 'supervisor';
 
+  // Segregation of duties: the QA who created this call cannot be the one
+  // to resolve an escalation raised against it — that must be a different
+  // QA or a Supervisor. Kept read-only for them; the server enforces the
+  // same rule so it can't be bypassed by calling the API directly.
+  const isSelfEscalation = user?.role === 'qa' && Number(formData.qa_id) === Number(user?.id);
+
   const isReadOnly = id && !(
-    (formData.status === 'Escalated' && (user?.role === 'qa' || user?.role === 'supervisor')) ||
+    (formData.status === 'Escalated' && !isSelfEscalation && (user?.role === 'qa' || user?.role === 'supervisor')) ||
     isQaEdit
   );
 
-  const isEditMode = id && (formData.status === 'Escalated' || isQaEdit) && (user?.role === 'qa' || user?.role === 'supervisor');
+  const isEditMode = id && ((formData.status === 'Escalated' && !isSelfEscalation) || isQaEdit) && (user?.role === 'qa' || user?.role === 'supervisor');
   const isCreation = !id;
   const isViewingOnly = id && !isEditMode;
 
@@ -1515,8 +1521,19 @@ export default function EvaluationForm() {
               <h3 className="text-sm font-black text-white uppercase tracking-[0.2em]">Escalation Audit Trail</h3>
             </div>
             
+            {/* Segregation of duties: the QA who logged this call can't
+                resolve its escalation themselves. */}
+            {id && formData.status === 'Escalated' && isSelfEscalation && (
+              <div className="flex items-center gap-3 bg-amber-500/10 px-4 py-2.5 rounded-2xl border border-amber-500/20">
+                <AlertCircle size={16} className="text-amber-500 shrink-0" />
+                <p className="text-[11px] font-bold text-amber-600 dark:text-amber-400">
+                  You created this call, so you can't resolve its escalation. Another QA or a Supervisor must respond.
+                </p>
+              </div>
+            )}
+
             {/* QA Decision Buttons - Moved for maximum visibility with extra glow */}
-            {id && formData.status === 'Escalated' && (user?.role === 'qa' || user?.role === 'supervisor') && (
+            {id && formData.status === 'Escalated' && !isSelfEscalation && (user?.role === 'qa' || user?.role === 'supervisor') && (
               <div className="flex gap-3 bg-indigo-500/10 p-2 rounded-2xl border border-indigo-500/20 shadow-[0_0_20px_rgba(99,102,241,0.15)] animate-pulse">
                 <button 
                   onClick={() => { setPendingAction('approved'); setActionComment(''); setShowActionModal(true); }}

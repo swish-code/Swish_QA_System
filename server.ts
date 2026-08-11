@@ -2173,6 +2173,18 @@ async function startServer() {
       const evaluation = await db.prepare("SELECT agent_id, final_score, qa_id FROM evaluations WHERE id = ?").get(evaluation_id) as any;
       if (!evaluation) return res.status(404).json({ error: "Evaluation not found" });
 
+      // Segregation of duties: the QA who created this call cannot resolve
+      // its own escalation — a different QA or a Supervisor must. The call
+      // stays 'Escalated' until someone else is available. Supervisors are
+      // exempt. Enforced here so the hidden buttons can't be bypassed via a
+      // direct API call.
+      if (Number(evaluation.qa_id) === Number(user_id)) {
+        const actor = await db.prepare("SELECT role FROM users WHERE id = ?").get(user_id) as any;
+        if (actor?.role !== 'supervisor') {
+          return res.status(403).json({ error: "You created this call — another QA or a Supervisor must resolve the escalation." });
+        }
+      }
+
       const newStatus = action === 'approved' ? 'Quality Approved' : 'Rejected by Quality';
 
       if (action === 'approved' && newData) {
@@ -2243,6 +2255,12 @@ async function startServer() {
 
       const evaluation = await db.prepare("SELECT agent_id, final_score, qa_id FROM evaluations WHERE id = ?").get(evaluation_id) as any;
       if (!evaluation) return res.status(404).json({ error: "Evaluation not found" });
+
+      // Same segregation-of-duties rule as qa-action, for the QA branch of
+      // this generic responder (the tl branch is unaffected).
+      if (role === 'qa' && Number(evaluation.qa_id) === Number(user_id)) {
+        return res.status(403).json({ error: "You created this call — another QA or a Supervisor must resolve the escalation." });
+      }
 
       let newStatus = "";
       if (role === 'tl') {
