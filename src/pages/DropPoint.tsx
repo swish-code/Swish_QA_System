@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import * as XLSX from 'xlsx';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from '../context/AuthContext';
 import {
@@ -13,7 +14,8 @@ import {
   Phone,
   Target,
   Calendar,
-  Filter
+  Filter,
+  FileSpreadsheet
 } from 'lucide-react';
 
 interface AgentReport {
@@ -46,6 +48,7 @@ export default function DropPoint() {
     direction: 'desc'
   });
   const [expandedRow, setExpandedRow] = useState<number | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
 
   const fetchReport = useCallback(async () => {
     setLoading(true);
@@ -127,6 +130,43 @@ export default function DropPoint() {
       });
   }, [reports, searchTerm, sortConfig]);
 
+  // Exports what's currently on screen — same filtered/sorted rows the
+  // table renders — as a two-sheet workbook: the per-agent rollup, and
+  // every individual issue hit flattened out for deeper analysis.
+  const handleExport = () => {
+    setIsExporting(true);
+    try {
+      const summaryRows = filteredReports.map(r => ({
+        'Agent': r.agent_name,
+        'Agent ID': r.agent_id,
+        'Calls': r.total_calls,
+        'Average Score': `${r.avg_score}%`,
+        'Avg Duration (AHT)': r.avg_duration,
+        'Issue Hits': r.error_list.reduce((acc, cur) => acc + cur.count, 0),
+      }));
+
+      const issueRows = filteredReports.flatMap(r =>
+        r.error_list.map(e => ({
+          'Agent': r.agent_name,
+          'Agent ID': r.agent_id,
+          'Issue': e.label,
+          'Hits': e.count,
+        }))
+      );
+
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(summaryRows), 'Drop Point Summary');
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(issueRows), 'Issue Breakdown');
+      const stamp = new Date().toISOString().slice(0, 10);
+      XLSX.writeFile(wb, `drop-point-${stamp}.xlsx`);
+    } catch (err) {
+      console.error(err);
+      alert('Export failed. Please try again.');
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   return (
     <div className="p-4 sm:p-6 lg:p-8 space-y-6 sm:space-y-8 max-w-[1600px] mx-auto">
       {/* Header section */}
@@ -143,6 +183,15 @@ export default function DropPoint() {
         </div>
 
         <div className="flex items-center gap-3">
+          <button
+            onClick={handleExport}
+            disabled={isExporting || filteredReports.length === 0}
+            className="bg-emerald-600 text-white px-4 py-3 rounded-2xl flex items-center gap-2 text-[11px] font-black uppercase tracking-widest shadow-lg shadow-emerald-500/20 hover:bg-emerald-500 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+            title="Export the current filtered report to Excel"
+          >
+            <FileSpreadsheet size={16} />
+            {isExporting ? 'Exporting…' : 'Export to Excel'}
+          </button>
           <button
             onClick={fetchReport}
             disabled={loading}
