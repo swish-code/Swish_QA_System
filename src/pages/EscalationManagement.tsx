@@ -117,16 +117,15 @@ export default function EscalationManagement() {
     setIsLoading(true);
     try {
       if (activeTab === 'pending') {
-        // Pull a wide page so pending items and agent-escalation requests
-        // aren't hidden behind the default 10-row pagination.
-        const res = await fetch(`/api/evaluations?user_id=${user?.id}&role=${user?.role}&limit=500&page=1`);
-        const result = await res.json();
-        const data = result.data || [];
-        
+        // Filter by status SERVER-side. Previously this pulled the newest 500
+        // evaluations and filtered in the browser, so once the system grew
+        // past 500 calls any escalation older than that window silently
+        // vanished from this page (while still showing in the History Log).
         // The TL pre-approval stage was removed — 'Escalated' is the only
-        // in-flight state now. QA/supervisor act on it; the TL sees their
-        // escalations that are still awaiting a Quality decision.
-        setEscalations(data.filter((e: Evaluation) => e.status === 'Escalated'));
+        // in-flight state now.
+        const res = await fetch(`/api/evaluations?user_id=${user?.id}&role=${user?.role}&status=Escalated&limit=1000&page=1`);
+        const result = await res.json();
+        setEscalations(result.data || []);
       } else {
         const res = await fetch('/api/escalations/history');
         const data = await res.json();
@@ -146,12 +145,12 @@ export default function EscalationManagement() {
     setIsExporting(true);
     try {
       const [pendingRes, historyRes] = await Promise.all([
-        fetch(`/api/evaluations?user_id=${user?.id}&role=${user?.role}&limit=500&page=1`),
+        // Status filtered server-side — see loadData for why.
+        fetch(`/api/evaluations?user_id=${user?.id}&role=${user?.role}&status=Escalated&limit=1000&page=1`),
         fetch('/api/escalations/history'),
       ]);
       const pendingData = (await pendingRes.json()).data || [];
       const pendingRows = pendingData
-        .filter((e: Evaluation) => e.status === 'Escalated')
         .map((e: Evaluation) => ({
           'Call #': e.id,
           Agent: e.agent_name,
