@@ -5,6 +5,8 @@ import { createDb } from "./db";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import cors from "cors";
+import multer from "multer";
+import { v2 as cloudinary } from "cloudinary";
 
 // Safety net: many route handlers are async without a try/catch, so a transient
 // DB error (e.g. a dropped Postgres connection) would otherwise bubble up as an
@@ -26,6 +28,53 @@ if (process.env.NODE_ENV === "production" && !process.env.JWT_SECRET) {
     "[security] JWT_SECRET is not set in production. Using the fallback dev secret — " +
     "tokens are guessable. Set JWT_SECRET in your environment."
   );
+}
+
+// Cloudinary — image storage for call-evaluation attachments. Optional: the
+// upload endpoint below returns a clear 503 until these are set, so the rest
+// of the app works fine without them configured yet.
+const CLOUDINARY_CONFIGURED = !!(
+  process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET
+);
+if (CLOUDINARY_CONFIGURED) {
+  cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key: process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET,
+    secure: true,
+  });
+} else {
+  console.warn(
+    "[uploads] CLOUDINARY_CLOUD_NAME / CLOUDINARY_API_KEY / CLOUDINARY_API_SECRET not set — " +
+    "evaluation image uploads are disabled until they're configured."
+  );
+}
+
+// In-memory storage (buffers, never touch disk) — Railway's filesystem is
+// ephemeral, so nothing local would survive a redeploy anyway. Cap at 5
+// images per request, 5MB each, images only.
+const imageUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024, files: 5 },
+  fileFilter: (_req, file, cb) => {
+    if (!/^image\/(jpeg|png|webp|gif)$/.test(file.mimetype)) {
+      return cb(new Error("Only JPEG, PNG, WEBP or GIF images are allowed."));
+    }
+    cb(null, true);
+  },
+});
+
+function uploadBufferToCloudinary(buffer: Buffer): Promise<{ url: string; public_id: string }> {
+  return new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      { folder: "swish-qa/evaluations", resource_type: "image" },
+      (err, result) => {
+        if (err || !result) return reject(err || new Error("Cloudinary upload failed"));
+        resolve({ url: result.secure_url, public_id: result.public_id });
+      }
+    );
+    stream.end(buffer);
+  });
 }
 
 async function startServer() {
@@ -1367,6 +1416,32 @@ async function startServer() {
 
       return { clause: '', params: [] };
     };
+
+    // Image uploads for call evaluations — QA attaches screenshots/photos
+    // while scoring a call. Uploads straight to Cloudinary (no local disk,
+    // since Railway's filesystem is ephemeral) and returns the URLs; the
+    // client stores them in the evaluation's data JSON. Not tied to a
+    // specific evaluation id since new calls don't have one yet.
+    app.post("/api/uploads/images", imageUpload.array("images", 5), async (req, res) => {
+      if (!CLOUDINARY_CONFIGURED) {
+        return res.status(503).json({ error: "Image uploads are not configured yet. Ask your admin to set up Cloudinary." });
+      }
+      try {
+        const files = (req.files as Express.Multer.File[]) || [];
+        if (files.length === 0) return res.status(400).json({ error: "No images provided." });
+        const uploaded = await Promise.all(files.map(f => uploadBufferToCloudinary(f.buffer)));
+        res.json({ images: uploaded });
+      } catch (e: any) {
+        console.error("Image upload failed:", e);
+        res.status(500).json({ error: e.message || "Upload failed." });
+      }
+    });
+    // Multer errors (oversize file, bad type, too many files) land here
+    // instead of the generic Express error page.
+    app.use("/api/uploads/images", (err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+      if (err) return res.status(400).json({ error: err.message || "Upload failed." });
+      next();
+    });
 
     // Health check
     app.get("/api/health", async (req, res) => {

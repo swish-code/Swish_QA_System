@@ -400,6 +400,8 @@ export default function AuditList() {
           'WOW Call': a.is_wow ? 'Yes' : 'No',
           'Common Issues': Array.isArray(d.common_issues) ? d.common_issues.join('; ') : '',
           'Error Classification': d.error_classification || '',
+          'Attachments': Array.isArray(d.images) ? d.images.length : 0,
+          'Attachment URLs': Array.isArray(d.images) ? d.images.map((img: any) => img.url).join('; ') : '',
         };
 
         // One column per scorecard attribute (Yes / No / N/A / — if not

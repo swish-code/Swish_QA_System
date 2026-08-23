@@ -24,7 +24,10 @@ import {
   Check,
   Bookmark,
   Sparkles,
-  ArrowLeft
+  ArrowLeft,
+  ImagePlus,
+  X,
+  Loader2
 } from 'lucide-react';
 import { User as UserType } from '../types';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
@@ -86,6 +89,8 @@ export default function EvaluationForm() {
   // Early duplicate probe state — effect lives below formData's declaration.
   const [dupWarning, setDupWarning] = useState<{ id: number; date: string; final_score: number; qa_name: string } | null>(null);
   const [isSavingDraft, setIsSavingDraft] = useState(false);
+  const [isUploadingImages, setIsUploadingImages] = useState(false);
+  const [imageUploadError, setImageUploadError] = useState('');
   // Controls the Critical Failure reason picker modal.
   const [showCriticalModal, setShowCriticalModal] = useState(false);
   // Draft selection inside the modal — only committed to formData on confirm.
@@ -150,6 +155,9 @@ export default function EvaluationForm() {
     critical_failure_reasons: [] as string[],
     // QA marks an exceptional call as WOW — surfaces on /wow-calls.
     is_wow: false,
+    // Screenshots/photos attached while scoring the call — array of
+    // { url, public_id } uploaded to Cloudinary via /api/uploads/images.
+    images: [] as { url: string; public_id: string }[],
     feedback: {
       general: '',
       internal: '',
@@ -438,6 +446,7 @@ export default function EvaluationForm() {
               status: found.status,
               responses: parsedData?.responses || {},
               common_issues: parsedData?.common_issues || [],
+              images: parsedData?.images || [],
               feedback: { ...prev.feedback, ...(parsedData?.feedback || {}) }
             }));
           }
@@ -453,6 +462,49 @@ export default function EvaluationForm() {
       fetchEvaluation();
     }
   }, [id]);
+
+  // Uploads the selected files straight to Cloudinary via the backend proxy
+  // and appends the returned URLs to formData.images. Enforces a max of 5
+  // attachments total client-side (the server also caps at 5 per request).
+  const MAX_IMAGES = 5;
+  const handleImageSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files: File[] = e.target.files ? Array.from(e.target.files) : [];
+    e.target.value = ''; // allow re-selecting the same file later
+    if (files.length === 0) return;
+
+    setImageUploadError('');
+    const remaining = MAX_IMAGES - (formData.images?.length || 0);
+    if (remaining <= 0) {
+      setImageUploadError(`You can attach up to ${MAX_IMAGES} images per call.`);
+      return;
+    }
+    const toUpload = files.slice(0, remaining);
+
+    setIsUploadingImages(true);
+    try {
+      const fd = new FormData();
+      toUpload.forEach(f => fd.append('images', f));
+      const res = await fetch('/api/uploads/images', { method: 'POST', body: fd });
+      const body = await res.json().catch(() => ({} as any));
+      if (!res.ok) {
+        setImageUploadError(body.error || 'Upload failed. Please try again.');
+        return;
+      }
+      setFormData((prev: any) => ({ ...prev, images: [...(prev.images || []), ...body.images] }));
+    } catch (err) {
+      setImageUploadError('Network error while uploading — please try again.');
+    } finally {
+      setIsUploadingImages(false);
+    }
+  };
+
+  const handleRemoveImage = (publicId: string) => {
+    if (isReadOnly) return;
+    setFormData((prev: any) => ({
+      ...prev,
+      images: (prev.images || []).filter((img: any) => img.public_id !== publicId),
+    }));
+  };
 
   const handleToggleFailure = (itemId: string) => {
     if (isReadOnly) return;
@@ -1230,6 +1282,66 @@ export default function EvaluationForm() {
               className="w-full bg-white dark:bg-zinc-900 border border-zinc-100 dark:border-zinc-800 rounded-xl px-4 py-3 text-xs text-zinc-800 dark:text-white outline-none placeholder:text-zinc-300 dark:placeholder:text-zinc-700"
             />
           </div>
+        </div>
+
+        {/* Attachments — screenshots/photos evidencing the call (order
+            confirmation, system error, etc). Uploaded straight to Cloudinary. */}
+        <div className="pt-6 border-t border-zinc-100 dark:border-zinc-900 space-y-3">
+          <div className="flex items-center justify-between">
+            <label className="text-[9px] font-black text-zinc-400 dark:text-zinc-600 uppercase tracking-widest block">
+              Attachments <span className="normal-case font-bold text-zinc-400 dark:text-zinc-600">({(formData.images || []).length}/{MAX_IMAGES})</span>
+            </label>
+            {!isReadOnly && (formData.images || []).length < MAX_IMAGES && (
+              <label className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest cursor-pointer transition-all ${
+                isUploadingImages
+                  ? 'bg-zinc-100 dark:bg-zinc-900 text-zinc-400 cursor-wait'
+                  : 'bg-indigo-500/10 border border-indigo-500/30 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-500 hover:text-white hover:border-indigo-500'
+              }`}>
+                {isUploadingImages ? <Loader2 size={12} className="animate-spin" /> : <ImagePlus size={12} />}
+                {isUploadingImages ? 'Uploading…' : 'Add Images'}
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,image/gif"
+                  multiple
+                  disabled={isUploadingImages}
+                  onChange={handleImageSelect}
+                  className="hidden"
+                />
+              </label>
+            )}
+          </div>
+
+          {imageUploadError && (
+            <p className="text-[10px] font-bold text-rose-500">{imageUploadError}</p>
+          )}
+
+          {(formData.images || []).length > 0 ? (
+            <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
+              {formData.images.map((img: any) => (
+                <a
+                  key={img.public_id}
+                  href={img.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="relative group aspect-square rounded-xl overflow-hidden border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900"
+                >
+                  <img src={img.url} alt="Call attachment" className="w-full h-full object-cover" />
+                  {!isReadOnly && (
+                    <button
+                      type="button"
+                      onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleRemoveImage(img.public_id); }}
+                      className="absolute top-1 right-1 p-1 rounded-lg bg-black/60 text-white opacity-0 group-hover:opacity-100 hover:bg-rose-600 transition-all"
+                      title="Remove image"
+                    >
+                      <X size={12} />
+                    </button>
+                  )}
+                </a>
+              ))}
+            </div>
+          ) : (
+            <p className="text-[10px] text-zinc-400 dark:text-zinc-600 italic">No images attached.</p>
+          )}
         </div>
       </section>
 
