@@ -2779,8 +2779,18 @@ async function startServer() {
         JOIN users u ON l.user_id = u.id
         WHERE l.evaluation_id = ?
         ORDER BY l.created_at ASC
-      `).all(req.params.id);
-      res.json(history);
+      `).all(req.params.id) as any[];
+
+      // Same identity mask as the evaluations list: the Agent/TL/CC Supervisor
+      // viewing this call's escalation trail must not see which QA acted on
+      // it — this endpoint had been leaking the real name unconditionally.
+      const viewerRole = req.query.viewer_role as string;
+      const maskQA = viewerRole === 'agent' || viewerRole === 'tl' || viewerRole === 'cc_supervisor';
+      const out = maskQA
+        ? history.map(row => row.role === 'qa' ? { ...row, user_name: 'QA', user_id: null } : row)
+        : history;
+
+      res.json(out);
     });
 
     // Coaching

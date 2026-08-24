@@ -451,7 +451,7 @@ export default function EvaluationForm() {
             }));
           }
 
-          const hRes = await fetch(`/api/evaluations/${id}/escalation-history`);
+          const hRes = await fetch(`/api/evaluations/${id}/escalation-history?viewer_role=${user?.role || ''}`);
           if (!hRes.ok) throw new Error(`HTTP error! status: ${hRes.status}`);
           const hData = await hRes.json();
           setEscalationHistory(hData);
