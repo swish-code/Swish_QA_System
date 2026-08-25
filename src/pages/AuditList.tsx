@@ -401,7 +401,14 @@ export default function AuditList() {
           'Common Issues': Array.isArray(d.common_issues) ? d.common_issues.join('; ') : '',
           'Error Classification': d.error_classification || '',
           'Attachments': Array.isArray(d.images) ? d.images.length : 0,
-          'Attachment URLs': Array.isArray(d.images) ? d.images.map((img: any) => img.url).join('; ') : '',
+          // Only real http(s) links are useful/safe in a spreadsheet cell —
+          // Excel caps a cell at ~32,767 chars, and a database-stored image's
+          // "url" is a base64 data: URI that can run past a megabyte.
+          'Attachment URLs': Array.isArray(d.images)
+            ? d.images
+                .map((img: any) => (typeof img.url === 'string' && img.url.startsWith('http') ? img.url : '(stored in database — open the call to view)'))
+                .join('; ')
+            : '',
         };
 
         // One column per scorecard attribute (Yes / No / N/A / — if not

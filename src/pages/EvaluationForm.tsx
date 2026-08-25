@@ -91,6 +91,12 @@ export default function EvaluationForm() {
   const [isSavingDraft, setIsSavingDraft] = useState(false);
   const [isUploadingImages, setIsUploadingImages] = useState(false);
   const [imageUploadError, setImageUploadError] = useState('');
+  // Storage mode differs the max file size (Cloudinary 5MB vs. the Postgres
+  // fallback's 1MB) — fetched once so the hint shown is accurate up front.
+  const [uploadConfig, setUploadConfig] = useState<{ storage: string; max_file_mb: number } | null>(null);
+  useEffect(() => {
+    fetch('/api/uploads/config').then(r => r.ok ? r.json() : null).then(setUploadConfig).catch(() => {});
+  }, []);
   // Controls the Critical Failure reason picker modal.
   const [showCriticalModal, setShowCriticalModal] = useState(false);
   // Draft selection inside the modal — only committed to formData on confirm.
@@ -1285,11 +1291,15 @@ export default function EvaluationForm() {
         </div>
 
         {/* Attachments — screenshots/photos evidencing the call (order
-            confirmation, system error, etc). Uploaded straight to Cloudinary. */}
+            confirmation, system error, etc). Uploads to Cloudinary once
+            configured; falls back to database storage until then (see
+            /api/uploads/config for which mode is active). */}
         <div className="pt-6 border-t border-zinc-100 dark:border-zinc-900 space-y-3">
           <div className="flex items-center justify-between">
             <label className="text-[9px] font-black text-zinc-400 dark:text-zinc-600 uppercase tracking-widest block">
-              Attachments <span className="normal-case font-bold text-zinc-400 dark:text-zinc-600">({(formData.images || []).length}/{MAX_IMAGES})</span>
+              Attachments <span className="normal-case font-bold text-zinc-400 dark:text-zinc-600">
+                ({(formData.images || []).length}/{MAX_IMAGES}{uploadConfig ? ` · max ${uploadConfig.max_file_mb}MB/image` : ''})
+              </span>
             </label>
             {!isReadOnly && (formData.images || []).length < MAX_IMAGES && (
               <label className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest cursor-pointer transition-all ${

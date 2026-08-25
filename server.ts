@@ -30,9 +30,14 @@ if (process.env.NODE_ENV === "production" && !process.env.JWT_SECRET) {
   );
 }
 
-// Cloudinary — image storage for call-evaluation attachments. Optional: the
-// upload endpoint below returns a clear 503 until these are set, so the rest
-// of the app works fine without them configured yet.
+// Cloudinary — preferred image storage for call-evaluation attachments, once
+// configured. Until then, uploads fall back to storing the image as a base64
+// data URI inside the evaluation's own row in Postgres (which — unlike this
+// app service — has a persistent Railway volume, so nothing is lost on a
+// redeploy). The fallback caps each image at 1MB to keep evaluation rows
+// reasonably sized; switching to Cloudinary later just needs the env vars
+// set and a restart — no code or data migration required, since existing
+// data-URI images keep working as ordinary <img src> values either way.
 const CLOUDINARY_CONFIGURED = !!(
   process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET
 );
@@ -46,16 +51,16 @@ if (CLOUDINARY_CONFIGURED) {
 } else {
   console.warn(
     "[uploads] CLOUDINARY_CLOUD_NAME / CLOUDINARY_API_KEY / CLOUDINARY_API_SECRET not set — " +
-    "evaluation image uploads are disabled until they're configured."
+    "evaluation images will be stored in Postgres instead (max 1MB/image) until Cloudinary is configured."
   );
 }
 
 // In-memory storage (buffers, never touch disk) — Railway's filesystem is
 // ephemeral, so nothing local would survive a redeploy anyway. Cap at 5
-// images per request, 5MB each, images only.
+// images per request; per-file size depends on the active storage mode.
 const imageUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024, files: 5 },
+  limits: { fileSize: (CLOUDINARY_CONFIGURED ? 5 : 1) * 1024 * 1024, files: 5 },
   fileFilter: (_req, file, cb) => {
     if (!/^image\/(jpeg|png|webp|gif)$/.test(file.mimetype)) {
       return cb(new Error("Only JPEG, PNG, WEBP or GIF images are allowed."));
@@ -75,6 +80,17 @@ function uploadBufferToCloudinary(buffer: Buffer): Promise<{ url: string; public
     );
     stream.end(buffer);
   });
+}
+
+// Fallback used while Cloudinary isn't configured: encode the image as a
+// data: URI so it round-trips through the same { url, public_id } shape and
+// renders in a plain <img src> with zero frontend changes. public_id is a
+// synthetic id (never a real Cloudinary asset) so "remove image" still works.
+function encodeBufferAsDataUri(buffer: Buffer, mimetype: string): { url: string; public_id: string } {
+  return {
+    url: `data:${mimetype};base64,${buffer.toString("base64")}`,
+    public_id: `db-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+  };
 }
 
 async function startServer() {
@@ -1417,20 +1433,29 @@ async function startServer() {
       return { clause: '', params: [] };
     };
 
+    // Lets the client show the right size hint / storage note before the QA
+    // even picks a file (the limit differs by storage mode).
+    app.get("/api/uploads/config", (_req, res) => {
+      res.json({
+        storage: CLOUDINARY_CONFIGURED ? 'cloudinary' : 'database',
+        max_file_mb: CLOUDINARY_CONFIGURED ? 5 : 1,
+        max_files: 5,
+      });
+    });
+
     // Image uploads for call evaluations — QA attaches screenshots/photos
-    // while scoring a call. Uploads straight to Cloudinary (no local disk,
-    // since Railway's filesystem is ephemeral) and returns the URLs; the
-    // client stores them in the evaluation's data JSON. Not tied to a
-    // specific evaluation id since new calls don't have one yet.
+    // while scoring a call. Uploads to Cloudinary when configured; otherwise
+    // falls back to a base64 data URI stored in the evaluation's own row
+    // (see encodeBufferAsDataUri above for why). Not tied to a specific
+    // evaluation id since new calls don't have one yet.
     app.post("/api/uploads/images", imageUpload.array("images", 5), async (req, res) => {
-      if (!CLOUDINARY_CONFIGURED) {
-        return res.status(503).json({ error: "Image uploads are not configured yet. Ask your admin to set up Cloudinary." });
-      }
       try {
         const files = (req.files as Express.Multer.File[]) || [];
         if (files.length === 0) return res.status(400).json({ error: "No images provided." });
-        const uploaded = await Promise.all(files.map(f => uploadBufferToCloudinary(f.buffer)));
-        res.json({ images: uploaded });
+        const uploaded = CLOUDINARY_CONFIGURED
+          ? await Promise.all(files.map(f => uploadBufferToCloudinary(f.buffer)))
+          : files.map(f => encodeBufferAsDataUri(f.buffer, f.mimetype));
+        res.json({ images: uploaded, storage: CLOUDINARY_CONFIGURED ? 'cloudinary' : 'database' });
       } catch (e: any) {
         console.error("Image upload failed:", e);
         res.status(500).json({ error: e.message || "Upload failed." });
@@ -1439,6 +1464,10 @@ async function startServer() {
     // Multer errors (oversize file, bad type, too many files) land here
     // instead of the generic Express error page.
     app.use("/api/uploads/images", (err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+      if (err?.code === 'LIMIT_FILE_SIZE') {
+        const maxMb = CLOUDINARY_CONFIGURED ? 5 : 1;
+        return res.status(400).json({ error: `Image too large — max ${maxMb}MB per file${CLOUDINARY_CONFIGURED ? '' : ' while using database storage'}.` });
+      }
       if (err) return res.status(400).json({ error: err.message || "Upload failed." });
       next();
     });
