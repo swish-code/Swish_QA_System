@@ -62,7 +62,10 @@ export default function AuditList() {
   const [statusFilter, setStatusFilter] = useState(searchParams.get('status') || 'all');
   const [coachingFilter, setCoachingFilter] = useState(searchParams.get('coaching_status') || 'all');
   const [scoreFilter, setScoreFilter] = useState(searchParams.get('score') || 'all');
-  const [brandFilter, setBrandFilter] = useState(searchParams.get('brand') || 'all');
+  // Multi-select: URL carries a comma-separated list; empty = all brands.
+  const [selectedBrands, setSelectedBrands] = useState<string[]>(
+    (searchParams.get('brand') || '').split(',').map(s => s.trim()).filter(Boolean)
+  );
   // Brand options come from Form Settings (the same source the evaluation
   // form uses), so the list always matches what QAs can actually pick.
   const [brands, setBrands] = useState<{ value: string; label: string }[]>([]);
@@ -346,7 +349,7 @@ export default function AuditList() {
       status: statusFilter,
       coaching_status: coachingFilter,
       score: scoreFilter,
-      brand: brandFilter,
+      brand: selectedBrands.join(','),
       from_date: startDate,
       to_date: endDate,
       search: searchTerm,
@@ -360,7 +363,7 @@ export default function AuditList() {
     setStatusFilter('all');
     setCoachingFilter('all');
     setScoreFilter('all');
-    setBrandFilter('all');
+    setSelectedBrands([]);
     setStartDate('');
     setEndDate('');
     setSearchParams({});
@@ -543,6 +546,7 @@ export default function AuditList() {
                 value={selectedAgents}
                 onChange={setSelectedAgents}
                 placeholder="All Agents"
+                itemNoun="agents"
                 compact
               />
             </div>
@@ -606,22 +610,17 @@ export default function AuditList() {
               </div>
             </div>
 
-            {/* Brand Filter */}
+            {/* Brand Filter — multi-select; empty selection = all brands */}
             <div>
               <label className="text-[9px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest block mb-1 ml-1">Brand</label>
-              <div className="relative">
-                <select
-                  className="w-full bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg pl-3 pr-7 py-2 text-xs text-zinc-800 dark:text-zinc-100 outline-none focus:border-indigo-500 appearance-none cursor-pointer"
-                  value={brandFilter}
-                  onChange={(e) => setBrandFilter(e.target.value)}
-                >
-                  <option value="all">All Brands</option>
-                  {brands.map(b => (
-                    <option key={b.value} value={b.value}>{b.label}</option>
-                  ))}
-                </select>
-                <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 dark:text-zinc-600 pointer-events-none" size={12} />
-              </div>
+              <MultiSelectField
+                options={brands.map(b => ({ value: b.value, label: b.label }))}
+                value={selectedBrands}
+                onChange={setSelectedBrands}
+                placeholder="All Brands"
+                itemNoun="brands"
+                compact
+              />
             </div>
 
             {/* Coaching Filter */}

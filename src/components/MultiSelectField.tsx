@@ -12,13 +12,15 @@ type Props = {
   disabled?: boolean;
   /** Small variant sized to sit inline with compact filter-bar inputs. */
   compact?: boolean;
+  /** Plural noun for the compact "N selected" chip (e.g. "agents", "brands"). */
+  itemNoun?: string;
 };
 
 /**
  * Lightweight multi-select with chips and an inline dropdown.
  * Click outside or on a chip's X to deselect; "Select all" toggles every option.
  */
-export default function MultiSelectField({ label, options, value, onChange, placeholder = 'Select…', disabled = false, compact = false }: Props) {
+export default function MultiSelectField({ label, options, value, onChange, placeholder = 'Select…', disabled = false, compact = false, itemNoun = 'selected' }: Props) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const rootRef = useRef<HTMLDivElement>(null);
@@ -89,7 +91,7 @@ export default function MultiSelectField({ label, options, value, onChange, plac
           // Compact: one summary chip instead of a wrapping chip cloud so the
           // control keeps the same height as the neighbouring inputs.
           <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-indigo-500/10 border border-indigo-500/30 text-indigo-700 dark:text-indigo-300 text-[10px] font-black uppercase tracking-widest">
-            {valueLabels.length} agents
+            {valueLabels.length} {itemNoun}
             <span
               role="button"
               tabIndex={-1}
