@@ -62,6 +62,10 @@ export default function AuditList() {
   const [statusFilter, setStatusFilter] = useState(searchParams.get('status') || 'all');
   const [coachingFilter, setCoachingFilter] = useState(searchParams.get('coaching_status') || 'all');
   const [scoreFilter, setScoreFilter] = useState(searchParams.get('score') || 'all');
+  const [brandFilter, setBrandFilter] = useState(searchParams.get('brand') || 'all');
+  // Brand options come from Form Settings (the same source the evaluation
+  // form uses), so the list always matches what QAs can actually pick.
+  const [brands, setBrands] = useState<{ value: string; label: string }[]>([]);
   const [startDate, setStartDate] = useState(searchParams.get('from_date') || '');
   const [endDate, setEndDate] = useState(searchParams.get('to_date') || '');
   const [isExporting, setIsExporting] = useState(false);
@@ -183,7 +187,18 @@ export default function AuditList() {
       .then(res => res.ok ? res.json() : Promise.reject())
       .then((settings: any[]) => {
         const map: Record<string, { label: string; critical: boolean; weight: number }> = {};
+        // Same payload also carries the active brand list for the filter,
+        // deduped case-insensitively so legacy casing variants collapse.
+        const seen = new Map<string, { value: string; label: string }>();
         for (const s of settings) {
+          if (s.field_type === 'brand') {
+            if (s.is_active === 0 || s.is_active === false) continue;
+            const value = typeof s.value === 'string' ? s.value : String(s.value ?? '');
+            if (!value) continue;
+            const key = value.trim().toUpperCase();
+            if (!seen.has(key)) seen.set(key, { value, label: s.label_en || value });
+            continue;
+          }
           if (s.field_type !== 'eval_question') continue;
           let cfg: any = {};
           try { cfg = typeof s.value === 'string' ? JSON.parse(s.value) : (s.value || {}); } catch {}
@@ -194,6 +209,7 @@ export default function AuditList() {
           };
         }
         setQuestionMap(map);
+        setBrands(Array.from(seen.values()).sort((a, b) => a.label.localeCompare(b.label)));
       })
       .catch(() => {});
   }, []);
@@ -330,6 +346,7 @@ export default function AuditList() {
       status: statusFilter,
       coaching_status: coachingFilter,
       score: scoreFilter,
+      brand: brandFilter,
       from_date: startDate,
       to_date: endDate,
       search: searchTerm,
@@ -343,6 +360,7 @@ export default function AuditList() {
     setStatusFilter('all');
     setCoachingFilter('all');
     setScoreFilter('all');
+    setBrandFilter('all');
     setStartDate('');
     setEndDate('');
     setSearchParams({});
@@ -516,7 +534,7 @@ export default function AuditList() {
       <div className="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-3 sm:p-4 shadow-sm">
         <div className="flex flex-col lg:flex-row gap-3 lg:items-end">
           {/* Filters Grid */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-2 sm:gap-3 flex-1">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-8 gap-2 sm:gap-3 flex-1">
             {/* Agent Filter — multi-select; empty selection = all agents */}
             <div>
               <label className="text-[9px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest block mb-1 ml-1">Agent</label>
@@ -583,6 +601,24 @@ export default function AuditList() {
                   <option value="zero">0%</option>
                   <option value="full">100%</option>
                   <option value="mid">1 to 99 %</option>
+                </select>
+                <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 dark:text-zinc-600 pointer-events-none" size={12} />
+              </div>
+            </div>
+
+            {/* Brand Filter */}
+            <div>
+              <label className="text-[9px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest block mb-1 ml-1">Brand</label>
+              <div className="relative">
+                <select
+                  className="w-full bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg pl-3 pr-7 py-2 text-xs text-zinc-800 dark:text-zinc-100 outline-none focus:border-indigo-500 appearance-none cursor-pointer"
+                  value={brandFilter}
+                  onChange={(e) => setBrandFilter(e.target.value)}
+                >
+                  <option value="all">All Brands</option>
+                  {brands.map(b => (
+                    <option key={b.value} value={b.value}>{b.label}</option>
+                  ))}
                 </select>
                 <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 dark:text-zinc-600 pointer-events-none" size={12} />
               </div>

@@ -1750,7 +1750,7 @@ async function startServer() {
 
     // Evaluations
     app.get("/api/evaluations", async (req, res) => {
-      const { user_id, role, agent_id, from_date, to_date, status, search, coaching_status, wow_only, score } = req.query;
+      const { user_id, role, agent_id, from_date, to_date, status, search, coaching_status, wow_only, score, brand } = req.query;
       const page = parseInt(req.query.page as string) || 1;
       const limit = parseInt(req.query.limit as string) || 10;
       const offset = (page - 1) * limit;
@@ -1814,6 +1814,17 @@ async function startServer() {
       if (status && status !== 'all') {
         baseQuery += " AND e.status = ?";
         params.push(status);
+      }
+
+      // Brand filter — supports one brand or a comma-separated list.
+      // Compared case-insensitively for the same reason the scope clauses
+      // are: brand values were saved with inconsistent casing historically.
+      if (brand && brand !== 'all') {
+        const brands = String(brand).split(',').map(b => b.trim()).filter(Boolean);
+        if (brands.length > 0) {
+          baseQuery += ` AND UPPER(e.brand) IN (${brands.map(() => '?').join(',')})`;
+          params.push(...brands.map(b => b.toUpperCase()));
+        }
       }
 
       // Score band filter — works alongside every other filter.
