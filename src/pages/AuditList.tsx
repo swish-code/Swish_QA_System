@@ -835,10 +835,10 @@ export default function AuditList() {
                          >
                            <Eye size={16} />
                          </button>
-                         {/* Editing a submitted call is supervisor-only — a QA
-                             cannot amend their own audits after submitting.
-                             (Escalation review is a separate flow.) */}
-                         {user?.role === 'supervisor' && (
+                         {/* A QA can edit calls they created; supervisors can
+                             edit any. Every edit is written to the Activity
+                             Audit with the exact field diff. */}
+                         {(user?.role === 'supervisor' || (user?.role === 'qa' && Number(audit.qa_id) === Number(user?.id))) && (
                            <button
                              onClick={(e) => { e.stopPropagation(); navigate(`/evaluate/${audit.id}?edit=1`); }}
                              className="p-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400 hover:bg-amber-500 hover:text-white hover:border-amber-500 transition-all"

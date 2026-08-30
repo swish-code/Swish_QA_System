@@ -2121,16 +2121,21 @@ async function startServer() {
       // trail (who changed what, when). Skipped silently if the row vanished.
       const before = await db.prepare("SELECT * FROM evaluations WHERE id = ?").get(evaluation_id) as any;
 
-      // Authorization: editing a submitted call is supervisor-only — a QA
-      // cannot amend an audit after submitting it, not even their own. The one
-      // exception is escalation review: while a call sits in 'Escalated', the
-      // Quality side is expected to rework the score before approving or
-      // rejecting it. Enforced here so the hidden pencil can't be bypassed by
-      // calling the API directly. Other flows (no editor_id) are unaffected.
+      // Authorization: a QA may edit calls THEY created; supervisors may edit
+      // any. (Editing was briefly supervisor-only; that was reverted — the
+      // audit trail below is what makes QA self-editing accountable.) The
+      // 'Escalated' exception stays so the Quality side can rework a score
+      // during escalation review. Enforced here so the hidden pencil can't be
+      // bypassed by calling the API directly.
+      let editorRow: any = null;
       if (editor_id && before) {
-        const editor = await db.prepare("SELECT role FROM users WHERE id = ?").get(editor_id) as any;
-        if (editor?.role !== 'supervisor' && before.status !== 'Escalated') {
-          return res.status(403).json({ error: "Only a supervisor can edit a submitted call." });
+        editorRow = await db.prepare("SELECT id, display_name, role FROM users WHERE id = ?").get(editor_id) as any;
+        if (
+          editorRow?.role !== 'supervisor' &&
+          before.status !== 'Escalated' &&
+          Number(before.qa_id) !== Number(editor_id)
+        ) {
+          return res.status(403).json({ error: "You can only edit calls you created." });
         }
       }
 
@@ -2183,12 +2188,37 @@ async function startServer() {
           }
 
           if (changes.length) {
-            const editor = await db.prepare("SELECT display_name FROM users WHERE id = ?").get(editor_id) as any;
+            const editorName = editorRow?.display_name
+              || (await db.prepare("SELECT display_name FROM users WHERE id = ?").get(editor_id) as any)?.display_name
+              || `User #${editor_id}`;
+
             await db.prepare(
               "INSERT INTO evaluation_edits (evaluation_id, editor_id, editor_name, changes) VALUES (?, ?, ?, ?)"
-            ).run(evaluation_id, editor_id, editor?.display_name || `User #${editor_id}`, JSON.stringify(changes));
+            ).run(evaluation_id, editor_id, editorName, JSON.stringify(changes));
             await db.prepare("UPDATE evaluations SET last_edited_at = CURRENT_TIMESTAMP, last_edited_by = ? WHERE id = ?")
               .run(editor_id, evaluation_id);
+
+            // Mirror the edit into the Activity Audit with the ACTUAL field
+            // diff. The generic middleware only records "evaluation updated",
+            // which can't answer "what exactly changed and when" — the whole
+            // point of allowing QAs to edit their own calls again.
+            try {
+              const summary = changes
+                .map((c: any) => `${c.label}: "${c.old}" -> "${c.new}"`)
+                .join(' | ');
+              await db.prepare(
+                `INSERT INTO audit_logs (user_id, user_name, action_type, section, details, ip_address, user_agent, status)
+                 VALUES (?, ?, 'EDIT_EVALUATION', 'Evaluations', ?, ?, ?, 'success')`
+              ).run(
+                editor_id,
+                editorName,
+                `Edited Call #${evaluation_id} — ${changes.length} field(s) changed. ${summary}`,
+                (req.headers['x-forwarded-for'] as string) || req.socket?.remoteAddress || '',
+                (req.headers['user-agent'] as string) || ''
+              );
+            } catch (err) {
+              console.error("Failed to write EDIT_EVALUATION audit entry:", err);
+            }
           }
         } catch (err) {
           console.error("Failed to record evaluation edit:", err);

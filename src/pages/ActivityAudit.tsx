@@ -17,7 +17,8 @@ import {
   Database,
   Tag,
   Clock,
-  X
+  X,
+  Pencil
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from '../context/AuthContext';
@@ -397,6 +398,23 @@ export default function ActivityAudit() {
             <option value="success">✅ SUCCESS</option>
             <option value="error">❌ ERROR</option>
           </select>
+
+          {/* One-click shortcut to the call-edit trail: who changed what on
+              which call, and when. Toggles the action filter. */}
+          <button
+            onClick={() => {
+              setFilterAction(filterAction === 'EDIT_EVALUATION' ? 'all' : 'EDIT_EVALUATION');
+              setPage(1);
+            }}
+            className={`flex items-center justify-center gap-2 px-6 py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all shadow-sm border ${
+              filterAction === 'EDIT_EVALUATION'
+                ? 'bg-amber-500 text-white border-amber-500 shadow-amber-500/20'
+                : 'bg-amber-500/10 border-amber-500/30 text-amber-600 dark:text-amber-400 hover:bg-amber-500 hover:text-white'
+            }`}
+            title="Show only edits made to calls — which fields changed, by whom, and when"
+          >
+            <Pencil size={12} /> Edits
+          </button>
 
           {/* Reset button */}
           <button
