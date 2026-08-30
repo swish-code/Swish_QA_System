@@ -18,7 +18,8 @@ import {
   Filter,
   Eye,
   AlertTriangle,
-  FileSpreadsheet
+  FileSpreadsheet,
+  Calendar
 } from 'lucide-react';
 
 interface EscalationLog {
@@ -58,6 +59,11 @@ export default function EscalationManagement() {
   const [activeTab, setActiveTab] = useState<'pending' | 'history'>('pending');
   const [escalations, setEscalations] = useState<Evaluation[]>([]);
   const [history, setHistory] = useState<any[]>([]);
+  // Date range. Pending filters on the CALL date (server-side); History
+  // filters on when the escalation action happened (client-side, since the
+  // history endpoint returns the full log).
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [selectedEval, setSelectedEval] = useState<Evaluation | null>(null);
   const [responseComment, setResponseComment] = useState('');
@@ -67,7 +73,8 @@ export default function EscalationManagement() {
 
   useEffect(() => {
     loadData();
-  }, [activeTab]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, fromDate, toDate]);
 
   const groupHistory = (logs: EscalationLog[]) => {
     const groups: { [key: number]: any } = {};
@@ -123,13 +130,23 @@ export default function EscalationManagement() {
         // vanished from this page (while still showing in the History Log).
         // The TL pre-approval stage was removed — 'Escalated' is the only
         // in-flight state now.
-        const res = await fetch(`/api/evaluations?user_id=${user?.id}&role=${user?.role}&status=Escalated&limit=1000&page=1`);
+        const dateQs = `${fromDate ? `&from_date=${fromDate}` : ''}${toDate ? `&to_date=${toDate}` : ''}`;
+        const res = await fetch(`/api/evaluations?user_id=${user?.id}&role=${user?.role}&status=Escalated&limit=1000&page=1${dateQs}`);
         const result = await res.json();
         setEscalations(result.data || []);
       } else {
         const res = await fetch('/api/escalations/history');
-        const data = await res.json();
-        setHistory(groupHistory(data));
+        const data: EscalationLog[] = await res.json();
+        // The history endpoint has no date params, so filter here on when
+        // the action was taken — comparing YYYY-MM-DD prefixes keeps the
+        // whole "to" day included regardless of time.
+        const filtered = data.filter(l => {
+          const day = String(l.created_at).slice(0, 10);
+          if (fromDate && day < fromDate) return false;
+          if (toDate && day > toDate) return false;
+          return true;
+        });
+        setHistory(groupHistory(filtered));
       }
     } catch (err) {
       console.error(err);
@@ -140,13 +157,15 @@ export default function EscalationManagement() {
 
   // Exports everything on this page — not just the active tab — as a
   // two-sheet workbook, fetched fresh so it's complete regardless of what's
-  // currently loaded in state.
+  // currently loaded in state. Honours the date range so the file matches
+  // what's on screen.
   const handleExport = async () => {
     setIsExporting(true);
     try {
+      const dateQs = `${fromDate ? `&from_date=${fromDate}` : ''}${toDate ? `&to_date=${toDate}` : ''}`;
       const [pendingRes, historyRes] = await Promise.all([
         // Status filtered server-side — see loadData for why.
-        fetch(`/api/evaluations?user_id=${user?.id}&role=${user?.role}&status=Escalated&limit=1000&page=1`),
+        fetch(`/api/evaluations?user_id=${user?.id}&role=${user?.role}&status=Escalated&limit=1000&page=1${dateQs}`),
         fetch('/api/escalations/history'),
       ]);
       const pendingData = (await pendingRes.json()).data || [];
@@ -164,7 +183,13 @@ export default function EscalationManagement() {
 
       const historyLogs: EscalationLog[] = await historyRes.json();
       const historyRows = historyLogs
-        .slice()
+        // Same action-date window the History tab applies on screen.
+        .filter(l => {
+          const day = String(l.created_at).slice(0, 10);
+          if (fromDate && day < fromDate) return false;
+          if (toDate && day > toDate) return false;
+          return true;
+        })
         .sort((a, b) => a.evaluation_id - b.evaluation_id || new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
         .map(l => ({
           'Call #': l.evaluation_id,
@@ -232,7 +257,39 @@ export default function EscalationManagement() {
           <h2 className="text-2xl sm:text-3xl font-light text-zinc-900 dark:text-white tracking-tight mb-1">Escalation Management</h2>
           <p className="text-zinc-500 text-sm">Review, approve, or reject disputed interactions and track audit history.</p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Date range — Pending filters by call date, History by when the
+              escalation action happened. */}
+          <div className="px-3 py-2 bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-2xl flex items-center gap-2 shadow-sm">
+            <Calendar size={14} className="text-indigo-600 dark:text-indigo-400 shrink-0" />
+            <input
+              type="date"
+              value={fromDate}
+              max={toDate || undefined}
+              onChange={(e) => setFromDate(e.target.value)}
+              className="bg-transparent text-xs font-bold text-zinc-600 dark:text-zinc-300 outline-none w-[112px] dark:[color-scheme:dark]"
+              title={activeTab === 'pending' ? 'From (call date)' : 'From (action date)'}
+            />
+            <span className="text-zinc-400 dark:text-zinc-600">–</span>
+            <input
+              type="date"
+              value={toDate}
+              min={fromDate || undefined}
+              onChange={(e) => setToDate(e.target.value)}
+              className="bg-transparent text-xs font-bold text-zinc-600 dark:text-zinc-300 outline-none w-[112px] dark:[color-scheme:dark]"
+              title={activeTab === 'pending' ? 'To (call date)' : 'To (action date)'}
+            />
+            {(fromDate || toDate) && (
+              <button
+                onClick={() => { setFromDate(''); setToDate(''); }}
+                title="Clear date filter"
+                className="text-zinc-400 hover:text-rose-500 dark:hover:text-rose-400 transition-colors shrink-0"
+              >
+                <XCircle size={14} />
+              </button>
+            )}
+          </div>
+
           <div className="flex bg-zinc-50 dark:bg-zinc-950 p-1 rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-xl">
             <button
               onClick={() => setActiveTab('pending')}
