@@ -110,12 +110,27 @@ export default function EscalationManagement() {
       group.actions.sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
       const first = group.actions[0];
       const last = group.actions[group.actions.length - 1];
+
+      // Surface BOTH sides of the dispute, not just whoever acted last:
+      // who raised it (the escalation/request) and who resolved it
+      // (the approve/reject). Previously only `latest_user` was shown, so
+      // the escalating TL was invisible in the list.
+      const raiser = group.actions.find((a: any) => a.action === 'escalated' || a.action === 'requested') || first;
+      const resolver = [...group.actions].reverse().find((a: any) => a.action === 'approved' || a.action === 'rejected');
+
       return {
         ...group,
         initial_score: first.old_score,
         latest_score: last.new_score,
         latest_user: last.user_name,
-        latest_comment: last.comment
+        latest_comment: last.comment,
+        raised_by: raiser?.user_name || '',
+        raised_role: raiser?.role || '',
+        raised_comment: raiser?.comment || '',
+        resolved_by: resolver?.user_name || '',
+        resolved_role: resolver?.role || '',
+        resolved_action: resolver?.action || '',
+        resolved_comment: resolver?.comment || '',
       };
     }).sort((a: any, b: any) => new Date(b.latest_timestamp).getTime() - new Date(a.latest_timestamp).getTime());
   };
@@ -475,11 +490,44 @@ export default function EscalationManagement() {
                           <p className="text-[11px] text-zinc-500 dark:text-zinc-400 line-clamp-1 italic" title={group.latest_comment}>
                             "{group.latest_comment || 'No comment'}"
                           </p>
-                          <div className="flex items-center gap-2">
-                             <div className="w-4 h-4 rounded bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 flex items-center justify-center text-[8px] font-black text-indigo-600 dark:text-indigo-400">
-                                {group.latest_user.charAt(0)}
-                             </div>
-                             <span className="text-[9px] text-zinc-400 dark:text-zinc-500 font-bold uppercase tracking-widest">{group.latest_user}</span>
+
+                          {/* Both sides: who raised the escalation and who
+                              resolved it — the row used to show only the last
+                              actor, hiding the escalating TL entirely. */}
+                          <div className="flex flex-col gap-1">
+                            {group.raised_by && (
+                              <div className="flex items-center gap-1.5" title={group.raised_comment || undefined}>
+                                <span className="px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-500 text-[8px] font-black uppercase tracking-widest shrink-0">
+                                  Raised
+                                </span>
+                                <span className="text-[9px] text-zinc-500 dark:text-zinc-400 font-bold truncate">
+                                  {group.raised_by}
+                                  {group.raised_role && <span className="text-zinc-400 dark:text-zinc-600"> ({group.raised_role})</span>}
+                                </span>
+                              </div>
+                            )}
+                            {group.resolved_by ? (
+                              <div className="flex items-center gap-1.5" title={group.resolved_comment || undefined}>
+                                <span className={`px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-widest shrink-0 ${
+                                  group.resolved_action === 'approved'
+                                    ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-500'
+                                    : 'bg-rose-500/10 text-rose-600 dark:text-rose-500'
+                                }`}>
+                                  {group.resolved_action === 'approved' ? 'Approved' : 'Rejected'}
+                                </span>
+                                <span className="text-[9px] text-zinc-500 dark:text-zinc-400 font-bold truncate">
+                                  {group.resolved_by}
+                                  {group.resolved_role && <span className="text-zinc-400 dark:text-zinc-600"> ({group.resolved_role})</span>}
+                                </span>
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-1.5">
+                                <span className="px-1.5 py-0.5 rounded bg-zinc-500/10 text-zinc-500 text-[8px] font-black uppercase tracking-widest shrink-0">
+                                  Pending
+                                </span>
+                                <span className="text-[9px] text-zinc-400 dark:text-zinc-600 font-bold">Awaiting Quality</span>
+                              </div>
+                            )}
                           </div>
                        </div>
                     </td>
