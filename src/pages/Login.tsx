@@ -28,7 +28,9 @@ export default function Login() {
       const data = await response.json();
       if (response.ok) {
         login(data);
-        navigate('/');
+        // Compliance users have no dashboard — land them on their one screen
+        // rather than bouncing them off '/' via the route guard.
+        navigate(data.user?.role === 'compliance' ? '/compliance-search' : '/');
       } else {
         setError(data.error || 'Invalid credentials');
       }

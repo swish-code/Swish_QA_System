@@ -1755,6 +1755,17 @@ async function startServer() {
       const limit = parseInt(req.query.limit as string) || 10;
       const offset = (page - 1) * limit;
 
+      // The compliance role gets the phone-lookup endpoint and nothing else.
+      // Checked against the stored role (a single PK lookup) rather than the
+      // `role` query param, so the restriction survives a hand-crafted
+      // request — the route guard alone only hides the UI.
+      if (user_id) {
+        const caller = await db.prepare("SELECT role FROM users WHERE id = ?").get(user_id) as any;
+        if (caller?.role === 'compliance') {
+          return res.status(403).json({ error: "Not authorised." });
+        }
+      }
+
       let baseQuery = `
         FROM evaluations e
         JOIN users a ON e.agent_id = a.id
@@ -2004,6 +2015,49 @@ async function startServer() {
       } catch (e: any) {
         // Probe is advisory — never block the form on a probe failure.
         res.json({ exists: false });
+      }
+    });
+
+    // Compliance lookup — the ONLY data endpoint the 'compliance' role can
+    // use. It answers one question: has a call been registered for this
+    // customer number? Deliberately returns no score, no QA identity and no
+    // evaluation content, so the role stays read-only and minimal.
+    //
+    // Matching mirrors the duplicate probe above: compare the last 8 digits
+    // so +965 prefixes, spaces and dashes on either side never cause a miss.
+    app.get("/api/compliance/phone-lookup", async (req, res) => {
+      try {
+        const { user_id, phone } = req.query;
+
+        // The caller's role is read from the DB, never taken from the query
+        // string — otherwise anyone could grant themselves access by
+        // appending &role=compliance.
+        const caller = await db.prepare("SELECT role FROM users WHERE id = ?").get(user_id) as any;
+        if (!caller || !['compliance', 'supervisor'].includes(caller.role)) {
+          return res.status(403).json({ error: "Not authorised." });
+        }
+
+        const digits = String(phone || '').replace(/\D/g, '');
+        if (digits.length < 7) {
+          return res.status(400).json({ error: "Enter at least 7 digits of the customer number." });
+        }
+        const key = digits.slice(-8);
+
+        const rows = await db.prepare(`
+          SELECT e.id, e.date, e.brand, e.call_type, e.status,
+                 COALESCE(e.data->>'customer_phone', '') AS customer_phone,
+                 a.display_name AS agent_name
+          FROM evaluations e
+          LEFT JOIN users a ON e.agent_id = a.id
+          WHERE RIGHT(regexp_replace(COALESCE(e.data->>'customer_phone', ''), '[^0-9]', '', 'g'), 8) = ?
+          ORDER BY e.date DESC, e.id DESC
+          LIMIT 100
+        `).all(key) as any[];
+
+        res.json({ found: rows.length > 0, count: rows.length, calls: rows });
+      } catch (e: any) {
+        console.error('Compliance phone lookup failed:', e);
+        res.status(500).json({ error: "Lookup failed. Please try again." });
       }
     });
 

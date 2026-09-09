@@ -38,7 +38,7 @@ export default function UserManagement() {
   const [search, setSearch] = useState('');
   const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
 
-  const roles: UserRole[] = ['supervisor', 'cc_supervisor', 'qa', 'tl', 'agent'];
+  const roles: UserRole[] = ['supervisor', 'cc_supervisor', 'qa', 'tl', 'agent', 'compliance'];
   const departments: Department[] = ['Swish', 'Mishmash', 'FM', 'Complain', 'TEC'];
   const departmentOptions = departments.map(d => ({ value: d, label: d }));
 

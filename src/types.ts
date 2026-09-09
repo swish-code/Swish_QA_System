@@ -1,4 +1,10 @@
-export type UserRole = 'supervisor' | 'cc_supervisor' | 'qa' | 'tl' | 'agent';
+/**
+ * `compliance` is a deliberately minimal role: it has exactly one screen
+ * (customer-number lookup) and no access to scores, agents or dashboards.
+ * See ProtectedRoute in App.tsx — the restriction is enforced by routing,
+ * not just by hiding sidebar links.
+ */
+export type UserRole = 'supervisor' | 'cc_supervisor' | 'qa' | 'tl' | 'agent' | 'compliance';
 export type Department = 'Swish' | 'Mishmash' | 'FM' | 'Complain' | 'TEC';
 
 export interface User {

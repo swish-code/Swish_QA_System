@@ -67,6 +67,7 @@ export default function Sidebar({ mobileOpen = false, onMobileClose }: SidebarPr
     { name: 'QA KPIs', icon: Trophy, path: '/qa-kpis', roles: ['qa', 'supervisor'] },
     { name: 'TL KPIs', icon: Trophy, path: '/tl-kpis', roles: ['cc_supervisor'] },
     { name: 'Accuracy Cases', icon: ShieldCheck, path: '/accuracy-cases', roles: ['qa', 'tl', 'supervisor'] },
+    { name: 'Customer Lookup', icon: ShieldCheck, path: '/compliance-search', roles: ['compliance', 'supervisor'] },
     { name: 'User Management', icon: Users, path: '/users', roles: ['supervisor'] },
     { name: 'Activity Audit', icon: History, path: '/activity-audit', roles: ['supervisor'] },
     { name: 'Form Settings', icon: Settings, path: '/settings/form', roles: ['supervisor'] },

@@ -24,13 +24,35 @@ import WOWCalls from './pages/WOWCalls';
 import CCOperations from './pages/CCOperations';
 import TLKPIs from './pages/TLKPIs';
 import Info from './pages/Info';
+import ComplianceSearch from './pages/ComplianceSearch';
 
-const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
+/** The single screen the compliance role is allowed to open. */
+const COMPLIANCE_HOME = '/compliance-search';
+
+const ProtectedRoute = ({
+  children,
+  compliancePage = false,
+}: {
+  children: React.ReactNode;
+  /** Marks the one route the compliance role may reach. */
+  compliancePage?: boolean;
+}) => {
   const { user, isLoading } = useAuth();
-  
+
   if (isLoading) return <div className="min-h-screen bg-white dark:bg-black flex items-center justify-center text-zinc-900 dark:text-white italic font-light tracking-[0.2em] uppercase text-xs transition-colors duration-500">Loading...</div>;
   if (!user) return <Navigate to="/login" />;
-  
+
+  // Compliance is scoped to one screen, enforced here rather than only by
+  // hiding sidebar links — otherwise a typed URL would open the whole app.
+  // (The lookup endpoint checks the role server-side too.)
+  if (user.role === 'compliance' && !compliancePage) {
+    return <Navigate to={COMPLIANCE_HOME} replace />;
+  }
+  // Conversely, the lookup screen is for compliance and supervisors only.
+  if (compliancePage && !['compliance', 'supervisor'].includes(user.role)) {
+    return <Navigate to="/" replace />;
+  }
+
   return <Layout>{children}</Layout>;
 };
 
@@ -62,6 +84,7 @@ export default function App() {
           <Route path="/cc-operations" element={<ProtectedRoute><CCOperations /></ProtectedRoute>} />
           <Route path="/tl-kpis" element={<ProtectedRoute><TLKPIs /></ProtectedRoute>} />
           <Route path="/info" element={<ProtectedRoute><Info /></ProtectedRoute>} />
+          <Route path={COMPLIANCE_HOME} element={<ProtectedRoute compliancePage><ComplianceSearch /></ProtectedRoute>} />
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>
         </Router>
