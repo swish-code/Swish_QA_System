@@ -32,6 +32,9 @@ interface EscalationLog {
   comment: string;
   old_score?: number;
   new_score?: number;
+  /** The evaluation's score as of NOW — differs from new_score whenever the
+   *  call was edited after this action was taken. */
+  current_score?: number;
   created_at: string;
   call_type?: string;
   brand?: string;
@@ -86,6 +89,7 @@ export default function EscalationManagement() {
           call_type: log.call_type,
           brand: log.brand,
           evaluation_date: log.evaluation_date,
+          current_score: log.current_score,
           actions: [],
           latest_timestamp: log.created_at
         };
@@ -118,10 +122,19 @@ export default function EscalationManagement() {
       const raiser = group.actions.find((a: any) => a.action === 'escalated' || a.action === 'requested') || first;
       const resolver = [...group.actions].reverse().find((a: any) => a.action === 'approved' || a.action === 'rejected');
 
+      // Prefer the evaluation's CURRENT score over what the last action
+      // recorded — a call approved/rejected at one score can be corrected
+      // afterward via the pencil, and the row must reflect that correction
+      // rather than the stale number from the moment of the decision.
+      const latestScore = group.current_score ?? last.new_score;
+      const editedAfterResolution = resolver && group.current_score != null && group.current_score !== resolver.new_score;
+
       return {
         ...group,
         initial_score: first.old_score,
-        latest_score: last.new_score,
+        latest_score: latestScore,
+        resolver_score: resolver?.new_score,
+        edited_after_resolution: editedAfterResolution,
         latest_user: last.user_name,
         latest_comment: last.comment,
         raised_by: raiser?.user_name || '',
@@ -476,13 +489,27 @@ export default function EscalationManagement() {
                       </div>
                     </td>
                     <td className="px-6 py-4">
-                      <div className="flex items-center gap-2 bg-zinc-50 dark:bg-black/20 p-2 rounded-xl border border-zinc-100 dark:border-zinc-900 shadow-inner">
-                        <span className="text-zinc-400 dark:text-zinc-600 text-[10px] font-mono italic">{group.initial_score}%</span>
-                        <ArrowRightLeft size={10} className="text-zinc-300 dark:text-zinc-800" />
-                        <span className={`text-xs font-black font-mono ${
-                          group.latest_score > group.initial_score ? 'text-emerald-600 dark:text-emerald-400' : 
-                          group.latest_score < group.initial_score ? 'text-rose-600 dark:text-rose-400' : 'text-zinc-800 dark:text-white'
-                        }`}>{group.latest_score}%</span>
+                      <div className="flex flex-col gap-1">
+                        <div className="flex items-center gap-2 bg-zinc-50 dark:bg-black/20 p-2 rounded-xl border border-zinc-100 dark:border-zinc-900 shadow-inner">
+                          <span className="text-zinc-400 dark:text-zinc-600 text-[10px] font-mono italic">{group.initial_score}%</span>
+                          <ArrowRightLeft size={10} className="text-zinc-300 dark:text-zinc-800" />
+                          <span className={`text-xs font-black font-mono ${
+                            group.latest_score > group.initial_score ? 'text-emerald-600 dark:text-emerald-400' :
+                            group.latest_score < group.initial_score ? 'text-rose-600 dark:text-rose-400' : 'text-zinc-800 dark:text-white'
+                          }`}>{group.latest_score}%</span>
+                        </div>
+                        {/* The Quality decision and the score shown can differ
+                            when the call was corrected via the pencil AFTER
+                            being resolved — this line is why the two numbers
+                            don't match the resolver's own approve/reject. */}
+                        {group.edited_after_resolution && (
+                          <span
+                            className="text-[8px] font-black uppercase tracking-widest text-indigo-500 dark:text-indigo-400 text-center"
+                            title={`${group.resolved_action === 'approved' ? 'Approved' : 'Rejected'} at ${group.resolver_score ?? ''}%, edited afterward to ${group.latest_score}%`}
+                          >
+                            Edited after {group.resolved_action}
+                          </span>
+                        )}
                       </div>
                     </td>
                     <td className="px-6 py-4">

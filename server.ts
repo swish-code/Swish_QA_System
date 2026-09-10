@@ -2886,8 +2886,14 @@ async function startServer() {
     });
 
     app.get("/api/escalations/history", async (req, res) => {
+      // current_score is the evaluation's score RIGHT NOW, separate from
+      // new_score (what the score was at the moment this action happened).
+      // Without it, the History Log showed a stale number whenever a call
+      // was edited after its escalation was resolved — e.g. approved at 93,
+      // then corrected to 100 via the pencil, with the page still saying 93.
       const history = await db.prepare(`
-        SELECT l.*, u.display_name as user_name, e.call_type, e.brand, e.date as evaluation_date
+        SELECT l.*, u.display_name as user_name, e.call_type, e.brand, e.date as evaluation_date,
+               e.final_score as current_score
         FROM escalation_logs l
         JOIN users u ON l.user_id = u.id
         JOIN evaluations e ON l.evaluation_id = e.id
