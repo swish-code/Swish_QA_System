@@ -87,6 +87,9 @@ if (!XONTEL_CONFIGURED) {
   );
 }
 
+/** XonTel's own words from the last failed login, for the error shown in the UI. */
+let lastXontelLoginError: string | null = null;
+
 /** Cloudflare Access service-token headers, when the tunnel is protected. */
 function xontelAccessHeaders(): Record<string, string> {
   const id = process.env.XONTEL_CF_ACCESS_CLIENT_ID;
@@ -102,7 +105,19 @@ async function xontelLogin(): Promise<string | null> {
       headers: { "Content-Type": "application/json", ...xontelAccessHeaders() },
       body: JSON.stringify({ username: process.env.XONTEL_USERNAME, password: process.env.XONTEL_PASSWORD }),
     });
-    if (!res.ok) { console.error("[xontel] login rejected with HTTP", res.status); return null; }
+    if (!res.ok) {
+      // XonTel answers 400 both for a malformed request ("password is
+      // required") and for wrong credentials ("Invalid username or
+      // password"), so the status alone can't tell them apart — keep its
+      // own message, and surface it rather than guessing.
+      const body = await res.text().catch(() => "");
+      let detail = "";
+      try { detail = JSON.parse(body)?.error || ""; } catch { detail = body.slice(0, 200); }
+      lastXontelLoginError = detail || `HTTP ${res.status}`;
+      console.error(`[xontel] login rejected (HTTP ${res.status}): ${lastXontelLoginError}`);
+      return null;
+    }
+    lastXontelLoginError = null;
     const data: any = await res.json();
     xontelToken = data?.token || null;
     return xontelToken;
@@ -145,7 +160,11 @@ function xontelErrorMessage(e: any): string {
   if (/fetch failed|ENOTFOUND|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|ECONNRESET/i.test(m)) {
     return "Cannot reach XonTel from this server — it may only accept connections from inside the office network.";
   }
-  if (/\b(401|403)\b/.test(m)) return "XonTel rejected our credentials.";
+  if (/\b(400|401|403)\b/.test(m)) {
+    return lastXontelLoginError
+      ? `XonTel rejected the sign-in: "${lastXontelLoginError}". Check XONTEL_USERNAME / XONTEL_PASSWORD.`
+      : "XonTel rejected our credentials.";
+  }
   return "XonTel request failed.";
 }
 
