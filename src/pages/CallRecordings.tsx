@@ -43,6 +43,11 @@ export default function CallRecordings() {
   const isSupervisor = user?.role === 'supervisor';
 
   const [configured, setConfigured] = useState<boolean | null>(null);
+  const [tunnelInfo, setTunnelInfo] = useState<{ base_url: string; is_quick_tunnel: boolean } | null>(null);
+  const [showTunnelFix, setShowTunnelFix] = useState(false);
+  const [newBaseUrl, setNewBaseUrl] = useState('');
+  const [savingUrl, setSavingUrl] = useState(false);
+  const [urlMsg, setUrlMsg] = useState('');
   const [agents, setAgents] = useState<any[]>([]);
   const [agentId, setAgentId] = useState<string>('');
   const [fromDate, setFromDate] = useState(isoDaysAgo(7));
@@ -62,7 +67,10 @@ export default function CallRecordings() {
   const [showLinks, setShowLinks] = useState(false);
 
   useEffect(() => {
-    fetch('/api/xontel/status').then(r => r.json()).then(d => setConfigured(!!d.configured)).catch(() => setConfigured(false));
+    fetch('/api/xontel/status').then(r => r.json()).then(d => {
+      setConfigured(!!d.configured);
+      setTunnelInfo({ base_url: d.base_url || '', is_quick_tunnel: !!d.is_quick_tunnel });
+    }).catch(() => setConfigured(false));
     fetch('/api/users').then(r => r.json()).then((all: any[]) => {
       let list = all.filter(u => u.role === 'agent' && u.status !== 'inactive');
       // A TL only browses their own team.
@@ -186,8 +194,72 @@ export default function CallRecordings() {
           <Loader2 size={16} className="animate-spin" /> Fetching calls from XonTel…
         </div>
       ) : error ? (
-        <div className="bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-400 rounded-2xl px-5 py-4 text-sm font-bold flex items-center gap-2">
-          <AlertCircle size={16} /> {error}
+        <div className="space-y-3">
+          <div className="bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-400 rounded-2xl px-5 py-4 text-sm font-bold flex items-center gap-2">
+            <AlertCircle size={16} /> {error}
+          </div>
+
+          {/* A quick tunnel gets a NEW hostname every time cloudflared
+              restarts, so an unreachable PBX usually just means the address
+              moved. Let a supervisor repoint it here instead of needing a
+              redeploy. */}
+          {isSupervisor && tunnelInfo?.is_quick_tunnel && /cannot reach/i.test(error) && (
+            <div className="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5">
+              {!showTunnelFix ? (
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <p className="text-xs text-zinc-600 dark:text-zinc-300 font-bold">
+                    The tunnel address changes whenever it restarts. If it was restarted, paste the new address here.
+                  </p>
+                  <button
+                    onClick={() => { setShowTunnelFix(true); setNewBaseUrl(tunnelInfo.base_url); setUrlMsg(''); }}
+                    className="px-4 py-2 rounded-xl bg-indigo-600 text-white text-[10px] font-black uppercase tracking-widest hover:bg-indigo-500 shrink-0"
+                  >
+                    Update address
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-zinc-400">Tunnel address</p>
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <input
+                      value={newBaseUrl}
+                      onChange={e => setNewBaseUrl(e.target.value)}
+                      placeholder="https://something.trycloudflare.com"
+                      className="flex-1 bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl px-3 py-2.5 text-xs font-bold text-zinc-800 dark:text-zinc-100 outline-none focus:border-indigo-500"
+                    />
+                    <button
+                      disabled={savingUrl || !newBaseUrl.trim()}
+                      onClick={async () => {
+                        setSavingUrl(true); setUrlMsg('');
+                        try {
+                          const res = await fetch('/api/xontel/base-url', {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ base_url: newBaseUrl.trim(), actor_id: user?.id }),
+                          });
+                          const data = await res.json();
+                          if (!res.ok) { setUrlMsg(data.error || 'Could not save.'); return; }
+                          setUrlMsg('Saved — reloading.');
+                          setTimeout(() => window.location.reload(), 700);
+                        } catch { setUrlMsg('Could not reach the server.'); }
+                        finally { setSavingUrl(false); }
+                      }}
+                      className="px-5 py-2.5 rounded-xl bg-indigo-600 text-white text-[10px] font-black uppercase tracking-widest hover:bg-indigo-500 disabled:opacity-40 shrink-0"
+                    >
+                      {savingUrl ? 'Checking…' : 'Save'}
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-zinc-400 dark:text-zinc-600 font-bold">
+                    The address is tested before it's saved, so a wrong one can't replace a working one.
+                  </p>
+                  {urlMsg && (
+                    <p className={`text-[11px] font-bold ${/saved/i.test(urlMsg) ? 'text-emerald-600 dark:text-emerald-500' : 'text-rose-600 dark:text-rose-400'}`}>
+                      {urlMsg}
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       ) : unmapped ? (
         <div className="bg-white dark:bg-zinc-950 border border-dashed border-zinc-300 dark:border-zinc-700 rounded-3xl p-8 text-center">

@@ -76,11 +76,27 @@ if (CLOUDINARY_CONFIGURED) {
 // folder serves recordings with no authentication of its own — the tunnel
 // should be locked behind Cloudflare Access. Setting the service-token pair
 // below makes every request carry it.
-const XONTEL_BASE_URL = (process.env.XONTEL_BASE_URL || "").replace(/\/+$/, "");
-const XONTEL_CONFIGURED = !!(XONTEL_BASE_URL && (process.env.XONTEL_TOKEN || (process.env.XONTEL_USERNAME && process.env.XONTEL_PASSWORD)));
+// The base URL is a runtime value, not a boot-time constant: while the PBX is
+// reached through a QUICK tunnel, its hostname changes every time cloudflared
+// restarts. Supervisors can therefore update it from inside the app (see
+// /api/xontel/base-url) instead of needing a redeploy each time. The env var
+// is the default and the fallback; a stored override wins when present.
+const XONTEL_ENV_BASE_URL = (process.env.XONTEL_BASE_URL || "").replace(/\/+$/, "");
+let xontelBaseUrlOverride: string | null = null;
+
+function xontelBaseUrl(): string {
+  return xontelBaseUrlOverride || XONTEL_ENV_BASE_URL;
+}
+function xontelHasCredentials(): boolean {
+  return !!(process.env.XONTEL_TOKEN || (process.env.XONTEL_USERNAME && process.env.XONTEL_PASSWORD));
+}
+function xontelConfigured(): boolean {
+  return !!(xontelBaseUrl() && xontelHasCredentials());
+}
+
 let xontelToken: string | null = process.env.XONTEL_TOKEN || null;
 
-if (!XONTEL_CONFIGURED) {
+if (!XONTEL_ENV_BASE_URL || !xontelHasCredentials()) {
   console.warn(
     "[xontel] XONTEL_BASE_URL + (XONTEL_TOKEN or XONTEL_USERNAME/XONTEL_PASSWORD) not set — " +
     "call-recording features are disabled until they are configured."
@@ -100,7 +116,7 @@ function xontelAccessHeaders(): Record<string, string> {
 async function xontelLogin(): Promise<string | null> {
   if (!process.env.XONTEL_USERNAME || !process.env.XONTEL_PASSWORD) return null;
   try {
-    const res = await fetch(`${XONTEL_BASE_URL}/api/v1/account/login`, {
+    const res = await fetch(`${xontelBaseUrl()}/api/v1/account/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...xontelAccessHeaders() },
       body: JSON.stringify({ username: process.env.XONTEL_USERNAME, password: process.env.XONTEL_PASSWORD }),
@@ -137,7 +153,7 @@ async function xontelLogin(): Promise<string | null> {
     // A bare "fetch failed" here almost always means the deployment cannot
     // route to XONTEL_BASE_URL at all — say so, rather than leaving it to be
     // mistaken for bad credentials.
-    console.error(`[xontel] cannot reach ${XONTEL_BASE_URL} — ${e.message}. ` +
+    console.error(`[xontel] cannot reach ${xontelBaseUrl()} — ${e.message}. ` +
       "If the PBX is only reachable inside the office network, point XONTEL_BASE_URL at a tunnel.");
     return null;
   }
@@ -145,9 +161,9 @@ async function xontelLogin(): Promise<string | null> {
 
 /** GET a XonTel API path, re-logging in once if the token was rejected. */
 async function xontelGet(path: string): Promise<any> {
-  if (!XONTEL_CONFIGURED) throw new Error("XonTel is not configured");
+  if (!xontelConfigured()) throw new Error("XonTel is not configured");
   const call = async (token: string | null) =>
-    fetch(`${XONTEL_BASE_URL}${path}`, {
+    fetch(`${xontelBaseUrl()}${path}`, {
       headers: { ...(token ? { Authorization: `Token ${token}` } : {}), ...xontelAccessHeaders() },
     });
 
@@ -631,7 +647,30 @@ async function startServer() {
         confirmed_by INTEGER,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
+
+      CREATE TABLE IF NOT EXISTS xontel_settings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        setting_key TEXT UNIQUE,
+        setting_value TEXT,
+        updated_by INTEGER,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
     `);
+
+    // Restore a base-URL override saved by a supervisor, so a quick tunnel's
+    // new hostname survives restarts of THIS app (it is the tunnel's own
+    // hostname that changes, not this setting).
+    try {
+      const saved = await db.prepare(
+        "SELECT setting_value FROM xontel_settings WHERE setting_key = 'base_url'"
+      ).get() as any;
+      if (saved?.setting_value) {
+        xontelBaseUrlOverride = String(saved.setting_value).replace(/\/+$/, "");
+        console.log(`[xontel] using saved base URL override: ${xontelBaseUrlOverride}`);
+      }
+    } catch (e) {
+      console.error('[xontel] could not load saved base URL:', e);
+    }
     // Seed system-wide defaults if missing.
     try {
       const existing = await db.prepare("SELECT id FROM qa_kpi_config WHERE user_id IS NULL").get();
@@ -2279,7 +2318,68 @@ async function startServer() {
     // -----------------------------------------------------------------------
 
     app.get("/api/xontel/status", (_req, res) => {
-      res.json({ configured: XONTEL_CONFIGURED });
+      res.json({
+        configured: xontelConfigured(),
+        base_url: xontelBaseUrl(),
+        // True while the PBX is reached through a throwaway tunnel, whose
+        // hostname changes whenever cloudflared restarts — that's what makes
+        // the editable base URL worth exposing at all.
+        is_quick_tunnel: /trycloudflare\.com$/i.test(xontelBaseUrl()),
+        overridden: !!xontelBaseUrlOverride,
+      });
+    });
+
+    /**
+     * Lets a supervisor repoint the integration at a new tunnel hostname
+     * without a redeploy. The new URL is probed BEFORE it is saved, so a typo
+     * can't replace a working address with a broken one.
+     */
+    app.post("/api/xontel/base-url", async (req, res) => {
+      try {
+        const { base_url, actor_id } = req.body;
+        const actor = await db.prepare("SELECT role FROM users WHERE id = ?").get(actor_id) as any;
+        if (actor?.role !== 'supervisor') {
+          return res.status(403).json({ error: "Only a supervisor can change this." });
+        }
+
+        const url = String(base_url || "").trim().replace(/\/+$/, "");
+        if (!/^https?:\/\/[^\s/]+$/i.test(url)) {
+          return res.status(400).json({ error: "Enter a full address, e.g. https://example.trycloudflare.com" });
+        }
+
+        // Verify it actually reaches XonTel. The CDR endpoint answers 401
+        // without a token, which is proof enough that XonTel is behind it —
+        // and avoids sending credentials to an address we don't trust yet.
+        let probe: Response;
+        try {
+          probe = await fetch(`${url}/api/v1/cdr/?size=1`, { signal: AbortSignal.timeout(15000) });
+        } catch (e: any) {
+          return res.status(400).json({ error: `Could not reach that address — ${e.message}` });
+        }
+        if (probe.status !== 401 && probe.status !== 200) {
+          return res.status(400).json({ error: `That address answered with HTTP ${probe.status}; it doesn't look like XonTel.` });
+        }
+
+        const existing = await db.prepare("SELECT id FROM xontel_settings WHERE setting_key = 'base_url'").get() as any;
+        if (existing) {
+          await db.prepare(
+            "UPDATE xontel_settings SET setting_value = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE setting_key = 'base_url'"
+          ).run(url, actor_id);
+        } else {
+          await db.prepare(
+            "INSERT INTO xontel_settings (setting_key, setting_value, updated_by) VALUES ('base_url', ?, ?)"
+          ).run(url, actor_id);
+        }
+
+        xontelBaseUrlOverride = url;
+        // Force a fresh login against the new address.
+        if (!process.env.XONTEL_TOKEN) xontelToken = null;
+        console.log(`[xontel] base URL updated to ${url} by user ${actor_id}`);
+        res.json({ success: true, base_url: url });
+      } catch (e: any) {
+        console.error('XonTel base URL update failed:', e.message);
+        res.status(500).json({ error: "Could not save the address." });
+      }
     });
 
     /**
@@ -2291,7 +2391,7 @@ async function startServer() {
      * queue matching the call's brand, so the likeliest recording leads.
      */
     app.get("/api/xontel/recording/:evaluationId", async (req, res) => {
-      if (!XONTEL_CONFIGURED) return res.status(503).json({ error: "XonTel is not configured." });
+      if (!xontelConfigured()) return res.status(503).json({ error: "XonTel is not configured." });
       try {
         const ev = await db.prepare(`
           SELECT e.id, e.date, e.brand, e.call_type, a.display_name AS agent_name,
@@ -2350,7 +2450,7 @@ async function startServer() {
 
     /** One agent's calls over a date range — needs a confirmed account mapping. */
     app.get("/api/xontel/agent-calls", async (req, res) => {
-      if (!XONTEL_CONFIGURED) return res.status(503).json({ error: "XonTel is not configured." });
+      if (!xontelConfigured()) return res.status(503).json({ error: "XonTel is not configured." });
       try {
         const { user_id, from_date, to_date, search } = req.query;
         const page = parseInt(req.query.page as string) || 1;
@@ -2402,7 +2502,7 @@ async function startServer() {
      * Range headers are forwarded so seeking in the player still works.
      */
     app.get("/api/xontel/stream", async (req, res) => {
-      if (!XONTEL_CONFIGURED) return res.status(503).json({ error: "XonTel is not configured." });
+      if (!xontelConfigured()) return res.status(503).json({ error: "XonTel is not configured." });
       const path = String(req.query.path || "");
       if (!/^\/media\/[A-Za-z0-9/_.-]+\.wav$/.test(path) || path.includes("..")) {
         return res.status(400).json({ error: "Invalid recording path." });
@@ -2410,7 +2510,7 @@ async function startServer() {
       try {
         const headers: Record<string, string> = { ...xontelAccessHeaders() };
         if (req.headers.range) headers.Range = String(req.headers.range);
-        const upstream = await fetch(`${XONTEL_BASE_URL}${path}`, { headers });
+        const upstream = await fetch(`${xontelBaseUrl()}${path}`, { headers });
         if (!upstream.ok && upstream.status !== 206) {
           return res.status(upstream.status).json({ error: "Recording not available." });
         }
@@ -2437,7 +2537,7 @@ async function startServer() {
      * one employee's calls to another.
      */
     app.get("/api/xontel/agent-map", async (_req, res) => {
-      if (!XONTEL_CONFIGURED) return res.status(503).json({ error: "XonTel is not configured." });
+      if (!xontelConfigured()) return res.status(503).json({ error: "XonTel is not configured." });
       try {
         const filters = await xontelGet("/api/v1/cdr/filters");
         const xonAgents = (filters?.agent || []).map((a: any) => ({
