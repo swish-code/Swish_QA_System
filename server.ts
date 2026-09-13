@@ -484,6 +484,17 @@ async function startServer() {
 
     // Per-QA KPI configuration. user_id NULL = system-wide defaults.
     // Weights must sum to 1.0 (frontend enforces; backend trusts).
+    //
+    // xontel_agent_map links a QA-system user to their XonTel agent account.
+    // The two systems name people differently ("Mohamed Gharieb" vs
+    // "M-Ghareeb"), so most rows are auto-suggested by normalised name and
+    // confirmed by a supervisor. Only the per-agent call browser needs it —
+    // matching one evaluation to its recording goes by customer phone + date.
+    //
+    // NOTE: keep explanations up here, not as `--` comments inside the SQL.
+    // db.exec() splits the block on ';', so a semicolon inside a SQL comment
+    // sends the rest of that comment to Postgres as its own statement. That
+    // took a deploy down once (syntax error at or near "matching").
     await db.exec(`
       CREATE TABLE IF NOT EXISTS qa_kpi_config (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -499,12 +510,6 @@ async function startServer() {
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
 
-      -- Links a QA-system user to their XonTel agent account. The two systems
-      -- name people differently ("Mohamed Gharieb" vs "M-Ghareeb"), so most
-      -- rows are auto-suggested by normalised name and confirmed by a
-      -- supervisor. Only needed for the per-agent call browser; matching a
-      -- single evaluation to its recording goes by customer phone + date and
-      -- needs no mapping at all.
       CREATE TABLE IF NOT EXISTS xontel_agent_map (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER UNIQUE,
