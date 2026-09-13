@@ -111,9 +111,21 @@ async function xontelLogin(): Promise<string | null> {
       // password"), so the status alone can't tell them apart — keep its
       // own message, and surface it rather than guessing.
       const body = await res.text().catch(() => "");
-      let detail = "";
-      try { detail = JSON.parse(body)?.error || ""; } catch { detail = body.slice(0, 200); }
-      lastXontelLoginError = detail || `HTTP ${res.status}`;
+      let parsed: any = null;
+      try { parsed = JSON.parse(body); } catch { /* keep the raw text below */ }
+
+      if (parsed?.session_exists) {
+        // XonTel permits one session per account and won't mint a second
+        // token while one is open — and its logout endpoint needs a token,
+        // so there's no way back in from here. A long-lived XONTEL_TOKEN is
+        // the supported path; a dedicated account keeps humans from
+        // competing with the integration for that single session.
+        lastXontelLoginError =
+          "XonTel already has an open session for this account and allows only one. " +
+          "Set XONTEL_TOKEN instead of a username/password, ideally for a dedicated integration account.";
+      } else {
+        lastXontelLoginError = parsed?.error || body.slice(0, 200) || `HTTP ${res.status}`;
+      }
       console.error(`[xontel] login rejected (HTTP ${res.status}): ${lastXontelLoginError}`);
       return null;
     }
