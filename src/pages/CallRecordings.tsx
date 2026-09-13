@@ -57,8 +57,9 @@ export default function CallRecordings() {
 
   const [isLoading, setIsLoading] = useState(false);
   const [calls, setCalls] = useState<XonCall[]>([]);
-  const [count, setCount] = useState(0);
-  const [pages, setPages] = useState<any>(null);
+  // XonTel's own totals ignore the date filter, so there is no trustworthy
+  // count to show — paging is driven by whether a full page came back.
+  const [hasMore, setHasMore] = useState(false);
   const [unmapped, setUnmapped] = useState(false);
   const [xonName, setXonName] = useState('');
   const [error, setError] = useState('');
@@ -94,8 +95,7 @@ export default function CallRecordings() {
       setUnmapped(!!data.unmapped);
       setXonName(data.xontel_agent_name || '');
       setCalls(data.calls || []);
-      setCount(data.count || 0);
-      setPages(data.pages || null);
+      setHasMore(!!data.has_more);
     } catch {
       setError('Could not reach the server.');
     } finally {
@@ -279,16 +279,16 @@ export default function CallRecordings() {
         <div className="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-3xl shadow-sm overflow-hidden">
           <div className="flex flex-wrap items-center justify-between gap-2 px-5 sm:px-6 py-4 border-b border-zinc-100 dark:border-zinc-900">
             <p className="text-[10px] font-black uppercase tracking-widest text-zinc-500">
-              {count} call{count === 1 ? '' : 's'}
+              {calls.length} call{calls.length === 1 ? '' : 's'} on this page
               <span className="text-zinc-300 dark:text-zinc-700"> · </span>
               XonTel account <span className="text-indigo-600 dark:text-indigo-400">{xonName}</span>
             </p>
-            {pages && pages.total_pages > 1 && (
+            {(page > 1 || hasMore) && (
               <div className="flex items-center gap-1">
                 <button disabled={page <= 1} onClick={() => { const p = page - 1; setPage(p); loadCalls(p); }}
                   className="p-1.5 rounded-lg border border-zinc-200 dark:border-zinc-800 disabled:opacity-30 text-zinc-500"><ChevronLeft size={14} /></button>
-                <span className="text-[10px] font-black text-zinc-500 px-2">{page} / {pages.total_pages}</span>
-                <button disabled={page >= pages.total_pages} onClick={() => { const p = page + 1; setPage(p); loadCalls(p); }}
+                <span className="text-[10px] font-black text-zinc-500 px-2">Page {page}</span>
+                <button disabled={!hasMore} onClick={() => { const p = page + 1; setPage(p); loadCalls(p); }}
                   className="p-1.5 rounded-lg border border-zinc-200 dark:border-zinc-800 disabled:opacity-30 text-zinc-500"><ChevronRight size={14} /></button>
               </div>
             )}

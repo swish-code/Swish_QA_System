@@ -2405,7 +2405,10 @@ async function startServer() {
         if (key.length < 7) return res.json({ found: false, reason: "no_phone", calls: [] });
 
         const data = await xontelGet(
-          `/api/v1/cdr/?search=${encodeURIComponent(key)}&from_date=${ev.date}&to_date=${ev.date}&size=20&page=1`
+          // XonTel's date parameters are start_date/end_date — from_date and
+          // to_date are silently IGNORED, returning today's calls whatever
+          // window is asked for.
+          `/api/v1/cdr/?search=${encodeURIComponent(key)}&start_date=${ev.date}&end_date=${ev.date}&size=20&page=1`
         );
 
         const wantAgent = normalizeAgentName(ev.agent_name);
@@ -2463,13 +2466,25 @@ async function startServer() {
         }
 
         const qs = new URLSearchParams({ agent: String(map.xontel_agent_id), size: "20", page: String(page) });
-        // XonTel defaults to today only, so always send an explicit window.
-        if (from_date) qs.set("from_date", String(from_date));
-        if (to_date) qs.set("to_date", String(to_date));
+        // The date parameters are start_date/end_date. from_date/to_date are
+        // accepted and then IGNORED — the reason this page showed today's
+        // calls no matter which range was picked. XonTel also defaults to
+        // today, so always send an explicit window.
+        if (from_date) qs.set("start_date", String(from_date));
+        if (to_date) qs.set("end_date", String(to_date));
         if (search) qs.set("search", String(search));
 
         const data = await xontelGet(`/api/v1/cdr/?${qs.toString()}`);
-        const calls = (data?.results || []).map((c: any) => ({
+
+        // Belt and braces on the agent filter: with a date range applied,
+        // XonTel leaks rows belonging to no agent at all (internal legs).
+        // Keep only rows actually attributed to the linked account.
+        const wanted = String(map.xontel_agent_name || "").trim().toLowerCase();
+        const rows = (data?.results || []).filter((c: any) =>
+          !wanted || String(c.agent || "").trim().toLowerCase() === wanted
+        );
+
+        const calls = rows.map((c: any) => ({
           xontel_id: c.id,
           time: c.cdr_time,
           duration: c.duration,
@@ -2483,8 +2498,13 @@ async function startServer() {
         res.json({
           unmapped: false,
           xontel_agent_name: map.xontel_agent_name,
-          count: data?.count || 0,
-          pages: data?.pages || null,
+          // XonTel's `count`/`total_pages` ignore the date window entirely
+          // (it reported 819,602 calls and 548 pages for a three-day range),
+          // so they are not reported as a total. Paging instead follows
+          // whether a full page came back.
+          count: null,
+          has_more: (data?.results || []).length >= 20,
+          page,
           calls,
         });
       } catch (e: any) {
