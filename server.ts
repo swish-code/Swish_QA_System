@@ -55,6 +55,86 @@ if (CLOUDINARY_CONFIGURED) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// XonTel (call-center PBX) integration
+// ---------------------------------------------------------------------------
+// XonTel exposes a REST API for call detail records; recordings are plain .wav
+// files. We use it for two things: finding the recording of an evaluated call
+// (matched on customer phone + date, which needs no account mapping), and
+// browsing one agent's calls (which does — see xontel_agent_map).
+//
+// Auth is a static token from /api/v1/account/login. XONTEL_TOKEN can be set
+// directly; if XONTEL_USERNAME/PASSWORD are also set we can re-login when the
+// token stops being accepted, so a rotated token doesn't take the feature down.
+const XONTEL_BASE_URL = (process.env.XONTEL_BASE_URL || "").replace(/\/+$/, "");
+const XONTEL_CONFIGURED = !!(XONTEL_BASE_URL && (process.env.XONTEL_TOKEN || (process.env.XONTEL_USERNAME && process.env.XONTEL_PASSWORD)));
+let xontelToken: string | null = process.env.XONTEL_TOKEN || null;
+
+if (!XONTEL_CONFIGURED) {
+  console.warn(
+    "[xontel] XONTEL_BASE_URL + (XONTEL_TOKEN or XONTEL_USERNAME/XONTEL_PASSWORD) not set — " +
+    "call-recording features are disabled until they are configured."
+  );
+}
+
+async function xontelLogin(): Promise<string | null> {
+  if (!process.env.XONTEL_USERNAME || !process.env.XONTEL_PASSWORD) return null;
+  try {
+    const res = await fetch(`${XONTEL_BASE_URL}/api/v1/account/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: process.env.XONTEL_USERNAME, password: process.env.XONTEL_PASSWORD }),
+    });
+    if (!res.ok) { console.error("[xontel] login failed:", res.status); return null; }
+    const data: any = await res.json();
+    xontelToken = data?.token || null;
+    return xontelToken;
+  } catch (e: any) {
+    console.error("[xontel] login error:", e.message);
+    return null;
+  }
+}
+
+/** GET a XonTel API path, re-logging in once if the token was rejected. */
+async function xontelGet(path: string): Promise<any> {
+  if (!XONTEL_CONFIGURED) throw new Error("XonTel is not configured");
+  const call = async (token: string | null) =>
+    fetch(`${XONTEL_BASE_URL}${path}`, { headers: token ? { Authorization: `Token ${token}` } : {} });
+
+  if (!xontelToken) await xontelLogin();
+  let res = await call(xontelToken);
+  if (res.status === 401 || res.status === 403) {
+    // Token rotated or expired — one retry with a fresh one.
+    const fresh = await xontelLogin();
+    if (fresh) res = await call(fresh);
+  }
+  if (!res.ok) throw new Error(`XonTel API ${res.status}`);
+  return res.json();
+}
+
+/** Normalises names for cross-system comparison: "M-Ghareeb" -> "m ghareeb". */
+function normalizeAgentName(s: any): string {
+  return String(s || "").toLowerCase().replace(/[_\-.]+/g, " ").replace(/\s+/g, " ").trim();
+}
+
+/** Last-8-digits key — immune to +965 prefixes, spaces and dashes. */
+function phoneKey(s: any): string {
+  return String(s || "").replace(/\D/g, "").slice(-8);
+}
+
+/**
+ * Reduces a XonTel recording URL to its /media/... path.
+ *
+ * Only the path is ever handed to the client, so the stream proxy takes a
+ * path it can validate instead of a caller-supplied URL it would have to
+ * fetch blindly (an SSRF risk). Returns null for anything unexpected.
+ */
+function mediaPathFromUrl(url: any): string | null {
+  if (!url) return null;
+  const m = String(url).match(/(\/media\/[^\s?#]+\.wav)$/i);
+  return m ? m[1] : null;
+}
+
 // In-memory storage (buffers, never touch disk) — Railway's filesystem is
 // ephemeral, so nothing local would survive a redeploy anyway. Cap at 5
 // images per request; per-file size depends on the active storage mode.
@@ -416,6 +496,21 @@ async function startServer() {
         weight_duration REAL DEFAULT 0.1,
         weight_tasks REAL DEFAULT 0.2,
         weight_accuracy REAL DEFAULT 0.3,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      -- Links a QA-system user to their XonTel agent account. The two systems
+      -- name people differently ("Mohamed Gharieb" vs "M-Ghareeb"), so most
+      -- rows are auto-suggested by normalised name and confirmed by a
+      -- supervisor. Only needed for the per-agent call browser; matching a
+      -- single evaluation to its recording goes by customer phone + date and
+      -- needs no mapping at all.
+      CREATE TABLE IF NOT EXISTS xontel_agent_map (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER UNIQUE,
+        xontel_agent_id INTEGER,
+        xontel_agent_name TEXT,
+        confirmed_by INTEGER,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
@@ -2058,6 +2153,235 @@ async function startServer() {
       } catch (e: any) {
         console.error('Compliance phone lookup failed:', e);
         res.status(500).json({ error: "Lookup failed. Please try again." });
+      }
+    });
+
+    // -----------------------------------------------------------------------
+    // XonTel call recordings
+    // -----------------------------------------------------------------------
+
+    app.get("/api/xontel/status", (_req, res) => {
+      res.json({ configured: XONTEL_CONFIGURED });
+    });
+
+    /**
+     * Recordings for one evaluated call.
+     *
+     * Matches on customer phone + call date rather than agent identity, so it
+     * works without any account mapping between the two systems. When several
+     * calls share that phone/date, they're ranked: same agent first, then a
+     * queue matching the call's brand, so the likeliest recording leads.
+     */
+    app.get("/api/xontel/recording/:evaluationId", async (req, res) => {
+      if (!XONTEL_CONFIGURED) return res.status(503).json({ error: "XonTel is not configured." });
+      try {
+        const ev = await db.prepare(`
+          SELECT e.id, e.date, e.brand, e.call_type, a.display_name AS agent_name,
+                 COALESCE(e.data->>'customer_phone', '') AS customer_phone
+          FROM evaluations e LEFT JOIN users a ON e.agent_id = a.id
+          WHERE e.id = ?
+        `).get(req.params.evaluationId) as any;
+
+        if (!ev) return res.status(404).json({ error: "Call not found." });
+        const key = phoneKey(ev.customer_phone);
+        if (key.length < 7) return res.json({ found: false, reason: "no_phone", calls: [] });
+
+        const data = await xontelGet(
+          `/api/v1/cdr/?search=${encodeURIComponent(key)}&from_date=${ev.date}&to_date=${ev.date}&size=20&page=1`
+        );
+
+        const wantAgent = normalizeAgentName(ev.agent_name);
+        const wantBrand = String(ev.brand || "").toLowerCase();
+
+        const calls = (data?.results || [])
+          .filter((c: any) => c.record_file_url)
+          .map((c: any) => {
+            const agentNorm = normalizeAgentName(c.agent);
+            // Names differ across systems, so score a token overlap rather
+            // than demanding equality: "Mohamed Gharieb" vs "M-Ghareeb".
+            const aTokens = agentNorm.split(" ").filter(Boolean);
+            const wTokens = wantAgent.split(" ").filter(Boolean);
+            const agentMatch = agentNorm === wantAgent
+              || (aTokens.length > 0 && aTokens.every(t => wTokens.includes(t)))
+              || (wTokens.length > 0 && wTokens.every(t => aTokens.includes(t)));
+            const queueMatch = !!wantBrand && String(c.dst || "").toLowerCase().includes(wantBrand.slice(0, 4));
+            return {
+              xontel_id: c.id,
+              time: c.cdr_time,
+              duration: c.duration,
+              call_type: c.call_type,
+              queue: c.dst,
+              agent: c.agent,
+              customer_number: c.caller_number,
+              // Path only — the client streams via our proxy, never straight
+              // from XonTel (see /api/xontel/stream).
+              media_path: mediaPathFromUrl(c.record_file_url),
+              agent_match: agentMatch,
+              queue_match: queueMatch,
+              score: (agentMatch ? 2 : 0) + (queueMatch ? 1 : 0),
+            };
+          })
+          .sort((a: any, b: any) => b.score - a.score);
+
+        res.json({ found: calls.length > 0, count: calls.length, calls });
+      } catch (e: any) {
+        console.error('XonTel recording lookup failed:', e.message);
+        res.status(502).json({ error: "Could not reach XonTel." });
+      }
+    });
+
+    /** One agent's calls over a date range — needs a confirmed account mapping. */
+    app.get("/api/xontel/agent-calls", async (req, res) => {
+      if (!XONTEL_CONFIGURED) return res.status(503).json({ error: "XonTel is not configured." });
+      try {
+        const { user_id, from_date, to_date, search } = req.query;
+        const page = parseInt(req.query.page as string) || 1;
+
+        const map = await db.prepare(
+          "SELECT xontel_agent_id, xontel_agent_name FROM xontel_agent_map WHERE user_id = ?"
+        ).get(user_id) as any;
+        if (!map?.xontel_agent_id) {
+          return res.json({ unmapped: true, calls: [], count: 0, error: "This employee is not linked to a XonTel account yet." });
+        }
+
+        const qs = new URLSearchParams({ agent: String(map.xontel_agent_id), size: "20", page: String(page) });
+        // XonTel defaults to today only, so always send an explicit window.
+        if (from_date) qs.set("from_date", String(from_date));
+        if (to_date) qs.set("to_date", String(to_date));
+        if (search) qs.set("search", String(search));
+
+        const data = await xontelGet(`/api/v1/cdr/?${qs.toString()}`);
+        const calls = (data?.results || []).map((c: any) => ({
+          xontel_id: c.id,
+          time: c.cdr_time,
+          duration: c.duration,
+          call_type: c.call_type,
+          queue: c.dst,
+          agent: c.agent,
+          customer_number: c.caller_number,
+          status: c.call_status?.value,
+          media_path: mediaPathFromUrl(c.record_file_url),
+        }));
+        res.json({
+          unmapped: false,
+          xontel_agent_name: map.xontel_agent_name,
+          count: data?.count || 0,
+          pages: data?.pages || null,
+          calls,
+        });
+      } catch (e: any) {
+        console.error('XonTel agent calls failed:', e.message);
+        res.status(502).json({ error: "Could not reach XonTel." });
+      }
+    });
+
+    /**
+     * Streams a recording through this server.
+     *
+     * Takes a media PATH, never a full URL — a url parameter here would be an
+     * SSRF hole, letting anyone make this server fetch arbitrary addresses.
+     * The path is additionally restricted to /media/ and checked for traversal.
+     * Range headers are forwarded so seeking in the player still works.
+     */
+    app.get("/api/xontel/stream", async (req, res) => {
+      if (!XONTEL_CONFIGURED) return res.status(503).json({ error: "XonTel is not configured." });
+      const path = String(req.query.path || "");
+      if (!/^\/media\/[A-Za-z0-9/_.-]+\.wav$/.test(path) || path.includes("..")) {
+        return res.status(400).json({ error: "Invalid recording path." });
+      }
+      try {
+        const headers: Record<string, string> = {};
+        if (req.headers.range) headers.Range = String(req.headers.range);
+        const upstream = await fetch(`${XONTEL_BASE_URL}${path}`, { headers });
+        if (!upstream.ok && upstream.status !== 206) {
+          return res.status(upstream.status).json({ error: "Recording not available." });
+        }
+        res.status(upstream.status);
+        res.setHeader("Content-Type", upstream.headers.get("content-type") || "audio/wav");
+        res.setHeader("Accept-Ranges", "bytes");
+        for (const h of ["content-length", "content-range"]) {
+          const v = upstream.headers.get(h);
+          if (v) res.setHeader(h, v);
+        }
+        const buf = Buffer.from(await upstream.arrayBuffer());
+        res.end(buf);
+      } catch (e: any) {
+        console.error('XonTel stream failed:', e.message);
+        res.status(502).json({ error: "Could not fetch the recording." });
+      }
+    });
+
+    /**
+     * Agent mapping for supervisors: every QA-system agent alongside its
+     * current link and, where absent, an auto-suggested XonTel account matched
+     * on normalised name. Suggestions are never applied silently — a
+     * supervisor confirms them via POST, because a wrong link would attribute
+     * one employee's calls to another.
+     */
+    app.get("/api/xontel/agent-map", async (_req, res) => {
+      if (!XONTEL_CONFIGURED) return res.status(503).json({ error: "XonTel is not configured." });
+      try {
+        const filters = await xontelGet("/api/v1/cdr/filters");
+        const xonAgents = (filters?.agent || []).map((a: any) => ({
+          id: a.value, name: a.label, norm: normalizeAgentName(a.label),
+        }));
+
+        const users = await db.prepare(`
+          SELECT u.id, u.display_name, u.role, m.xontel_agent_id, m.xontel_agent_name
+          FROM users u
+          LEFT JOIN xontel_agent_map m ON m.user_id = u.id
+          WHERE u.role = 'agent' AND u.status = 'active'
+          ORDER BY u.display_name
+        `).all() as any[];
+
+        const rows = users.map(u => {
+          if (u.xontel_agent_id) return { ...u, suggestion: null };
+          const un = normalizeAgentName(u.display_name);
+          const ut = un.split(" ").filter(Boolean);
+          const exact = xonAgents.find((x: any) => x.norm === un);
+          const partial = exact ? [] : xonAgents.filter((x: any) => {
+            const xt = x.norm.split(" ").filter(Boolean);
+            return xt.every((t: string) => ut.includes(t)) || ut.every((t: string) => xt.includes(t));
+          });
+          const pick = exact || (partial.length === 1 ? partial[0] : null);
+          return { ...u, suggestion: pick ? { id: pick.id, name: pick.name, exact: !!exact } : null };
+        });
+
+        res.json({ agents: xonAgents.map((a: any) => ({ id: a.id, name: a.name })), rows });
+      } catch (e: any) {
+        console.error('XonTel agent map failed:', e.message);
+        res.status(502).json({ error: "Could not reach XonTel." });
+      }
+    });
+
+    app.post("/api/xontel/agent-map", async (req, res) => {
+      try {
+        const { user_id, xontel_agent_id, xontel_agent_name, actor_id } = req.body;
+        const actor = await db.prepare("SELECT role FROM users WHERE id = ?").get(actor_id) as any;
+        if (actor?.role !== 'supervisor') {
+          return res.status(403).json({ error: "Only a supervisor can change account links." });
+        }
+        if (!user_id) return res.status(400).json({ error: "user_id is required." });
+
+        if (!xontel_agent_id) {
+          await db.prepare("DELETE FROM xontel_agent_map WHERE user_id = ?").run(user_id);
+          return res.json({ success: true, cleared: true });
+        }
+
+        const existing = await db.prepare("SELECT id FROM xontel_agent_map WHERE user_id = ?").get(user_id) as any;
+        if (existing) {
+          await db.prepare(
+            "UPDATE xontel_agent_map SET xontel_agent_id = ?, xontel_agent_name = ?, confirmed_by = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?"
+          ).run(xontel_agent_id, xontel_agent_name || '', actor_id, user_id);
+        } else {
+          await db.prepare(
+            "INSERT INTO xontel_agent_map (user_id, xontel_agent_id, xontel_agent_name, confirmed_by) VALUES (?, ?, ?, ?)"
+          ).run(user_id, xontel_agent_id, xontel_agent_name || '', actor_id);
+        }
+        res.json({ success: true });
+      } catch (e: any) {
+        console.error('XonTel agent map save failed:', e.message);
+        res.status(500).json({ error: "Could not save the link." });
       }
     });
 

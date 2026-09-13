@@ -1,6 +1,7 @@
 import { motion } from 'motion/react';
 import {
   LayoutDashboard,
+  Headphones,
   Users,
   FileCheck,
   PenTool,
@@ -67,6 +68,7 @@ export default function Sidebar({ mobileOpen = false, onMobileClose }: SidebarPr
     { name: 'QA KPIs', icon: Trophy, path: '/qa-kpis', roles: ['qa', 'supervisor'] },
     { name: 'TL KPIs', icon: Trophy, path: '/tl-kpis', roles: ['cc_supervisor'] },
     { name: 'Accuracy Cases', icon: ShieldCheck, path: '/accuracy-cases', roles: ['qa', 'tl', 'supervisor'] },
+    { name: 'Call Recordings', icon: Headphones, path: '/call-recordings', roles: ['qa', 'tl', 'supervisor', 'cc_supervisor'] },
     { name: 'Customer Lookup', icon: ShieldCheck, path: '/compliance-search', roles: ['compliance', 'supervisor'] },
     { name: 'User Management', icon: Users, path: '/users', roles: ['supervisor'] },
     { name: 'Activity Audit', icon: History, path: '/activity-audit', roles: ['supervisor'] },

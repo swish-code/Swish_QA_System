@@ -25,6 +25,7 @@ import CCOperations from './pages/CCOperations';
 import TLKPIs from './pages/TLKPIs';
 import Info from './pages/Info';
 import ComplianceSearch from './pages/ComplianceSearch';
+import CallRecordings from './pages/CallRecordings';
 
 /** The single screen the compliance role is allowed to open. */
 const COMPLIANCE_HOME = '/compliance-search';
@@ -85,6 +86,7 @@ export default function App() {
           <Route path="/tl-kpis" element={<ProtectedRoute><TLKPIs /></ProtectedRoute>} />
           <Route path="/info" element={<ProtectedRoute><Info /></ProtectedRoute>} />
           <Route path={COMPLIANCE_HOME} element={<ProtectedRoute compliancePage><ComplianceSearch /></ProtectedRoute>} />
+          <Route path="/call-recordings" element={<ProtectedRoute><CallRecordings /></ProtectedRoute>} />
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>
         </Router>

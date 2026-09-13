@@ -32,6 +32,7 @@ import {
 import { User as UserType } from '../types';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { notifyDraftsChanged } from '../context/DraftsContext';
+import CallRecording from '../components/CallRecording';
 
 const COMMON_ISSUES = [
   'Wrong Order', 'No Upselling', 'Incomplete Info', 'Delay', 'Poor Listening',
@@ -1633,6 +1634,15 @@ export default function EvaluationForm() {
 
          {/* QA Re-evaluation Actions (Moved) */}
       </div>
+
+      {/* XonTel recording of this call — only once the evaluation exists,
+          since the match runs on the saved customer phone + date. Renders
+          nothing at all when the integration isn't configured. */}
+      {id && (
+        <div className="mt-8">
+          <CallRecording evaluationId={id} />
+        </div>
+      )}
 
       {escalationHistory.length > 0 && (
         <div className="glass-card p-4 sm:p-6 lg:p-8 mt-8 sm:mb-12 border-l-4 border-indigo-500 shadow-[0_0_50px_rgba(99,102,241,0.05)]">
