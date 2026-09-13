@@ -66,6 +66,16 @@ if (CLOUDINARY_CONFIGURED) {
 // Auth is a static token from /api/v1/account/login. XONTEL_TOKEN can be set
 // directly; if XONTEL_USERNAME/PASSWORD are also set we can re-login when the
 // token stops being accepted, so a rotated token doesn't take the feature down.
+//
+// XONTEL_BASE_URL normally points at a Cloudflare Tunnel rather than the PBX
+// itself: the PBX only accepts connections from inside the office network, so
+// a cloud deployment cannot reach it directly. The tunnel also supplies HTTPS,
+// without which the browser would block the audio as mixed content.
+//
+// Because that tunnel puts XonTel on the public internet — and its /media/
+// folder serves recordings with no authentication of its own — the tunnel
+// should be locked behind Cloudflare Access. Setting the service-token pair
+// below makes every request carry it.
 const XONTEL_BASE_URL = (process.env.XONTEL_BASE_URL || "").replace(/\/+$/, "");
 const XONTEL_CONFIGURED = !!(XONTEL_BASE_URL && (process.env.XONTEL_TOKEN || (process.env.XONTEL_USERNAME && process.env.XONTEL_PASSWORD)));
 let xontelToken: string | null = process.env.XONTEL_TOKEN || null;
@@ -77,20 +87,31 @@ if (!XONTEL_CONFIGURED) {
   );
 }
 
+/** Cloudflare Access service-token headers, when the tunnel is protected. */
+function xontelAccessHeaders(): Record<string, string> {
+  const id = process.env.XONTEL_CF_ACCESS_CLIENT_ID;
+  const secret = process.env.XONTEL_CF_ACCESS_CLIENT_SECRET;
+  return id && secret ? { "CF-Access-Client-Id": id, "CF-Access-Client-Secret": secret } : {};
+}
+
 async function xontelLogin(): Promise<string | null> {
   if (!process.env.XONTEL_USERNAME || !process.env.XONTEL_PASSWORD) return null;
   try {
     const res = await fetch(`${XONTEL_BASE_URL}/api/v1/account/login`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...xontelAccessHeaders() },
       body: JSON.stringify({ username: process.env.XONTEL_USERNAME, password: process.env.XONTEL_PASSWORD }),
     });
-    if (!res.ok) { console.error("[xontel] login failed:", res.status); return null; }
+    if (!res.ok) { console.error("[xontel] login rejected with HTTP", res.status); return null; }
     const data: any = await res.json();
     xontelToken = data?.token || null;
     return xontelToken;
   } catch (e: any) {
-    console.error("[xontel] login error:", e.message);
+    // A bare "fetch failed" here almost always means the deployment cannot
+    // route to XONTEL_BASE_URL at all — say so, rather than leaving it to be
+    // mistaken for bad credentials.
+    console.error(`[xontel] cannot reach ${XONTEL_BASE_URL} — ${e.message}. ` +
+      "If the PBX is only reachable inside the office network, point XONTEL_BASE_URL at a tunnel.");
     return null;
   }
 }
@@ -99,7 +120,9 @@ async function xontelLogin(): Promise<string | null> {
 async function xontelGet(path: string): Promise<any> {
   if (!XONTEL_CONFIGURED) throw new Error("XonTel is not configured");
   const call = async (token: string | null) =>
-    fetch(`${XONTEL_BASE_URL}${path}`, { headers: token ? { Authorization: `Token ${token}` } : {} });
+    fetch(`${XONTEL_BASE_URL}${path}`, {
+      headers: { ...(token ? { Authorization: `Token ${token}` } : {}), ...xontelAccessHeaders() },
+    });
 
   if (!xontelToken) await xontelLogin();
   let res = await call(xontelToken);
@@ -110,6 +133,20 @@ async function xontelGet(path: string): Promise<any> {
   }
   if (!res.ok) throw new Error(`XonTel API ${res.status}`);
   return res.json();
+}
+
+/**
+ * Turns a XonTel failure into a message that says what actually went wrong.
+ * "Could not reach XonTel" was ambiguous enough to send us hunting for a bad
+ * password when the real problem was that the PBX isn't routable from here.
+ */
+function xontelErrorMessage(e: any): string {
+  const m = String(e?.message || "");
+  if (/fetch failed|ENOTFOUND|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|ECONNRESET/i.test(m)) {
+    return "Cannot reach XonTel from this server — it may only accept connections from inside the office network.";
+  }
+  if (/\b(401|403)\b/.test(m)) return "XonTel rejected our credentials.";
+  return "XonTel request failed.";
 }
 
 /** Normalises names for cross-system comparison: "M-Ghareeb" -> "m ghareeb". */
@@ -2231,7 +2268,7 @@ async function startServer() {
         res.json({ found: calls.length > 0, count: calls.length, calls });
       } catch (e: any) {
         console.error('XonTel recording lookup failed:', e.message);
-        res.status(502).json({ error: "Could not reach XonTel." });
+        res.status(502).json({ error: xontelErrorMessage(e) });
       }
     });
 
@@ -2276,7 +2313,7 @@ async function startServer() {
         });
       } catch (e: any) {
         console.error('XonTel agent calls failed:', e.message);
-        res.status(502).json({ error: "Could not reach XonTel." });
+        res.status(502).json({ error: xontelErrorMessage(e) });
       }
     });
 
@@ -2295,7 +2332,7 @@ async function startServer() {
         return res.status(400).json({ error: "Invalid recording path." });
       }
       try {
-        const headers: Record<string, string> = {};
+        const headers: Record<string, string> = { ...xontelAccessHeaders() };
         if (req.headers.range) headers.Range = String(req.headers.range);
         const upstream = await fetch(`${XONTEL_BASE_URL}${path}`, { headers });
         if (!upstream.ok && upstream.status !== 206) {
@@ -2355,7 +2392,7 @@ async function startServer() {
         res.json({ agents: xonAgents.map((a: any) => ({ id: a.id, name: a.name })), rows });
       } catch (e: any) {
         console.error('XonTel agent map failed:', e.message);
-        res.status(502).json({ error: "Could not reach XonTel." });
+        res.status(502).json({ error: xontelErrorMessage(e) });
       }
     });
 
