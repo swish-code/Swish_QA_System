@@ -22,7 +22,7 @@ type MapRow = {
   display_name: string;
   xontel_agent_id: number | null;
   xontel_agent_name: string | null;
-  suggestion: { id: number; name: string; exact: boolean } | null;
+  suggestion: { id: number; name: string; exact: boolean; why?: string } | null;
 };
 
 const isoDaysAgo = (n: number) => {
@@ -387,6 +387,7 @@ function AccountLinksPanel({ actorId, onClose }: { actorId: number; onClose: () 
                         <span className="inline-flex items-center gap-1 text-[9px] font-black uppercase tracking-widest text-emerald-600 dark:text-emerald-500"><CheckCircle2 size={12} /> Linked</span>
                       ) : r.suggestion ? (
                         <button onClick={() => save(r.id, r.suggestion!.id)}
+                          title={r.suggestion.exact ? 'Names match exactly' : `Matched on ${r.suggestion.why || 'name'} — check before confirming`}
                           className="text-[9px] font-black uppercase tracking-widest text-amber-600 dark:text-amber-400 hover:underline">
                           Confirm
                         </button>

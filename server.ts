@@ -180,6 +180,51 @@ function xontelErrorMessage(e: any): string {
   return "XonTel request failed.";
 }
 
+/**
+ * True when two name parts differ by at most one letter — the two systems
+ * transliterate Arabic names differently ("Ghareeb"/"Gharieb",
+ * "Esmael"/"Ismael"). Restricted to longer parts, since one edit on a short
+ * name can change who it refers to entirely.
+ */
+function nearToken(a: string, b: string): boolean {
+  if (a === b) return true;
+  if (a.length < 5 || b.length < 5) return false;
+  if (Math.abs(a.length - b.length) > 1) return false;
+  let i = 0, j = 0, edits = 0;
+  while (i < a.length && j < b.length) {
+    if (a[i] === b[j]) { i++; j++; continue; }
+    if (++edits > 1) return false;
+    if (a.length > b.length) i++;
+    else if (b.length > a.length) j++;
+    else { i++; j++; }
+  }
+  return edits + (a.length - i) + (b.length - j) <= 1;
+}
+
+/**
+ * How strongly a XonTel account's name matches a QA user's, or null for "not
+ * enough to suggest". One shared part alone never qualifies: an account
+ * called "Ahmed" would otherwise be proposed for every Ahmed on the roster.
+ */
+function linkEvidence(xTokens: string[], uTokens: string[]): string | null {
+  const shared = xTokens.filter(t => uTokens.includes(t)).length;
+  if (shared >= 2) return "two name parts";
+
+  // XonTel abbreviates first names: "A-Alaa" for "Ahmed Alaa".
+  if (xTokens.length === 2 && uTokens.length >= 2 && xTokens[0].length === 1 && xTokens[0] === uTokens[0][0]) {
+    const surname = xTokens[1];
+    if (uTokens.slice(1).some(t => t === surname || nearToken(t, surname))) return "initial + surname";
+  }
+
+  // One part matches outright and the other only differs in spelling.
+  if (shared === 1 && xTokens.length >= 2 && uTokens.length >= 2) {
+    const xOther = xTokens.find(t => !uTokens.includes(t));
+    const uOther = uTokens.find(t => !xTokens.includes(t));
+    if (xOther && uOther && nearToken(xOther, uOther)) return "one part + near spelling";
+  }
+  return null;
+}
+
 /** Normalises names for cross-system comparison: "M-Ghareeb" -> "m ghareeb". */
 function normalizeAgentName(s: any): string {
   return String(s || "").toLowerCase().replace(/[_\-.]+/g, " ").replace(/\s+/g, " ").trim();
@@ -2407,18 +2452,39 @@ async function startServer() {
           ORDER BY u.display_name
         `).all() as any[];
 
-        const rows = users.map(u => {
+        // Suggest only on strong name evidence (see linkEvidence), and only
+        // when exactly one account qualifies — two candidates mean we cannot
+        // tell them apart, which is precisely when a wrong link is likeliest.
+        const rows: any[] = users.map(u => {
           if (u.xontel_agent_id) return { ...u, suggestion: null };
           const un = normalizeAgentName(u.display_name);
           const ut = un.split(" ").filter(Boolean);
+
           const exact = xonAgents.find((x: any) => x.norm === un);
-          const partial = exact ? [] : xonAgents.filter((x: any) => {
-            const xt = x.norm.split(" ").filter(Boolean);
-            return xt.every((t: string) => ut.includes(t)) || ut.every((t: string) => xt.includes(t));
-          });
-          const pick = exact || (partial.length === 1 ? partial[0] : null);
-          return { ...u, suggestion: pick ? { id: pick.id, name: pick.name, exact: !!exact } : null };
+          if (exact) return { ...u, suggestion: { id: exact.id, name: exact.name, exact: true } };
+
+          const candidates = xonAgents
+            .map((x: any) => ({ x, why: linkEvidence(x.norm.split(" ").filter(Boolean), ut) }))
+            .filter((c: any) => c.why);
+          const pick = candidates.length === 1 ? candidates[0] : null;
+          return {
+            ...u,
+            suggestion: pick ? { id: pick.x.id, name: pick.x.name, exact: false, why: pick.why } : null,
+          };
         });
+
+        // Finally, drop any suggestion that points at a XonTel account already
+        // suggested for someone else (or already linked to someone else).
+        // Confirming two people onto one account would show one employee the
+        // other's calls, so no suggestion is better than a wrong one.
+        const claimed = new Map<number, number>();
+        for (const r of rows) {
+          if (r.xontel_agent_id) claimed.set(Number(r.xontel_agent_id), (claimed.get(Number(r.xontel_agent_id)) || 0) + 1);
+          if (r.suggestion) claimed.set(Number(r.suggestion.id), (claimed.get(Number(r.suggestion.id)) || 0) + 1);
+        }
+        for (const r of rows) {
+          if (r.suggestion && (claimed.get(Number(r.suggestion.id)) || 0) > 1) r.suggestion = null;
+        }
 
         res.json({ agents: xonAgents.map((a: any) => ({ id: a.id, name: a.name })), rows });
       } catch (e: any) {
@@ -2439,6 +2505,17 @@ async function startServer() {
         if (!xontel_agent_id) {
           await db.prepare("DELETE FROM xontel_agent_map WHERE user_id = ?").run(user_id);
           return res.json({ success: true, cleared: true });
+        }
+
+        // One XonTel account belongs to one person. Linking it twice would
+        // show one employee another's calls, so refuse rather than overwrite.
+        const takenBy = await db.prepare(
+          "SELECT m.user_id, u.display_name FROM xontel_agent_map m LEFT JOIN users u ON u.id = m.user_id WHERE m.xontel_agent_id = ? AND m.user_id <> ?"
+        ).get(xontel_agent_id, user_id) as any;
+        if (takenBy) {
+          return res.status(409).json({
+            error: `That XonTel account is already linked to ${takenBy.display_name || `user #${takenBy.user_id}`}. Unlink it there first.`,
+          });
         }
 
         const existing = await db.prepare("SELECT id FROM xontel_agent_map WHERE user_id = ?").get(user_id) as any;
