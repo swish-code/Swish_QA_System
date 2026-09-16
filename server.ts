@@ -94,7 +94,43 @@ function xontelConfigured(): boolean {
   return !!(xontelBaseUrl() && xontelHasCredentials());
 }
 
+// The token is persisted (see xontel_settings) and reused across restarts.
+// XonTel allows ONE session per account and its logout needs a valid token,
+// so an instance that logs in and is then replaced — which Railway does on
+// every deploy — would otherwise strand its own session and lock the next
+// instance out of the only slot. Reusing the stored token keeps the same
+// session alive instead of fighting it.
 let xontelToken: string | null = process.env.XONTEL_TOKEN || null;
+
+/** Serialises logins: concurrent requests must not each open a session. */
+let xontelLoginInFlight: Promise<string | null> | null = null;
+
+/**
+ * The database handle, published once startServer has built it. These helpers
+ * live at module scope (xontelLogin is called from anywhere), so they can't
+ * close over the local `db`.
+ */
+let xontelDb: any = null;
+
+async function persistXontelToken(token: string | null): Promise<void> {
+  const db = xontelDb;
+  if (!db) return;
+  try {
+    const existing = await db.prepare("SELECT id FROM xontel_settings WHERE setting_key = 'token'").get() as any;
+    if (existing) {
+      await db.prepare(
+        "UPDATE xontel_settings SET setting_value = ?, updated_at = CURRENT_TIMESTAMP WHERE setting_key = 'token'"
+      ).run(token || '');
+    } else {
+      await db.prepare(
+        "INSERT INTO xontel_settings (setting_key, setting_value) VALUES ('token', ?)"
+      ).run(token || '');
+    }
+  } catch (e) {
+    // Persisting is an optimisation; a failure here must not break the call.
+    console.error('[xontel] could not persist token:', e);
+  }
+}
 
 if (!XONTEL_ENV_BASE_URL || !xontelHasCredentials()) {
   console.warn(
@@ -131,15 +167,13 @@ async function xontelLogin(): Promise<string | null> {
       try { parsed = JSON.parse(body); } catch { /* keep the raw text below */ }
 
       if (parsed?.session_exists) {
-        // XonTel permits one session per account and won't mint a second
-        // token while one is open — and its logout endpoint needs a token,
-        // so there's no way back in from here. A long-lived XONTEL_TOKEN is
-        // the supported path; a dedicated account keeps humans from
-        // competing with the integration for that single session.
+        // One session per account, and logout needs a token we don't have —
+        // so a login can't clear this by itself. XonTel's own web UI offers
+        // "sign in anyway" in this situation, which is the way back in.
         lastXontelLoginError =
-          "XonTel allows only one session per account, and this one is already signed in somewhere. " +
-          "Sign out of that XonTel account in any open browser — this will then reconnect on its own, " +
-          "with no redeploy. Keep the integration's account for the integration alone.";
+          "XonTel allows only one session per account, and this one is already signed in. " +
+          "Sign in to that account in a browser, confirm \"sign in anyway\" when XonTel offers it, " +
+          "then sign out — this reconnects on its own afterwards, with no redeploy.";
       } else {
         lastXontelLoginError = parsed?.error || body.slice(0, 200) || `HTTP ${res.status}`;
       }
@@ -149,6 +183,9 @@ async function xontelLogin(): Promise<string | null> {
     lastXontelLoginError = null;
     const data: any = await res.json();
     xontelToken = data?.token || null;
+    // Keep it, so the next boot resumes THIS session instead of trying to
+    // open a second one against a slot its own predecessor still holds.
+    await persistXontelToken(xontelToken);
     return xontelToken;
   } catch (e: any) {
     // A bare "fetch failed" here almost always means the deployment cannot
@@ -160,6 +197,18 @@ async function xontelLogin(): Promise<string | null> {
   }
 }
 
+/**
+ * Logs in, but never more than once at a time. Without this, a burst of
+ * requests arriving with no token would each open a login — and against a
+ * one-session PBX those attempts knock each other out.
+ */
+async function xontelLoginOnce(): Promise<string | null> {
+  if (!xontelLoginInFlight) {
+    xontelLoginInFlight = xontelLogin().finally(() => { xontelLoginInFlight = null; });
+  }
+  return xontelLoginInFlight;
+}
+
 /** GET a XonTel API path, re-logging in once if the token was rejected. */
 async function xontelGet(path: string): Promise<any> {
   if (!xontelConfigured()) throw new Error("XonTel is not configured");
@@ -168,13 +217,16 @@ async function xontelGet(path: string): Promise<any> {
       headers: { ...(token ? { Authorization: `Token ${token}` } : {}), ...xontelAccessHeaders() },
     });
 
-  if (!xontelToken) await xontelLogin();
+  if (!xontelToken) await xontelLoginOnce();
   let res = await call(xontelToken);
   if (res.status === 401 || res.status === 403) {
     // Token rotated or expired — one retry with a fresh one.
-    const fresh = await xontelLogin();
+    const fresh = await xontelLoginOnce();
     if (fresh) res = await call(fresh);
   }
+  // A working call clears any stale login error, so the UI stops reporting a
+  // failure that has since resolved itself.
+  if (res.ok) lastXontelLoginError = null;
   if (!res.ok) throw new Error(`XonTel API ${res.status}`);
   return res.json();
 }
@@ -311,6 +363,8 @@ async function startServer() {
 
   try {
     const db = createDb();
+    // Let the module-scope XonTel helpers reach the database too.
+    xontelDb = db;
 
     await db.exec(`
       CREATE TABLE IF NOT EXISTS users (
@@ -671,6 +725,24 @@ async function startServer() {
       }
     } catch (e) {
       console.error('[xontel] could not load saved base URL:', e);
+    }
+
+    // Resume the previous session rather than opening a new one. XonTel allows
+    // a single session per account, so after a redeploy a fresh login would be
+    // refused by the session this app's own predecessor left behind.
+    // An explicit XONTEL_TOKEN still wins, since that is a deliberate override.
+    try {
+      if (!process.env.XONTEL_TOKEN) {
+        const savedToken = await db.prepare(
+          "SELECT setting_value FROM xontel_settings WHERE setting_key = 'token'"
+        ).get() as any;
+        if (savedToken?.setting_value) {
+          xontelToken = String(savedToken.setting_value);
+          console.log('[xontel] resumed the saved session token');
+        }
+      }
+    } catch (e) {
+      console.error('[xontel] could not load saved token:', e);
     }
     // Seed system-wide defaults if missing.
     try {
@@ -2373,8 +2445,11 @@ async function startServer() {
         }
 
         xontelBaseUrlOverride = url;
-        // Force a fresh login against the new address.
-        if (!process.env.XONTEL_TOKEN) xontelToken = null;
+        // Deliberately KEEP the current token: a new tunnel hostname is a new
+        // route to the same PBX, where the existing session is still valid.
+        // Discarding it would force a login that XonTel would then refuse,
+        // because that very session still occupies the account's only slot.
+        // If the token really is stale, the next call's 401 re-login covers it.
         console.log(`[xontel] base URL updated to ${url} by user ${actor_id}`);
         res.json({ success: true, base_url: url });
       } catch (e: any) {
