@@ -137,8 +137,9 @@ async function xontelLogin(): Promise<string | null> {
         // the supported path; a dedicated account keeps humans from
         // competing with the integration for that single session.
         lastXontelLoginError =
-          "XonTel already has an open session for this account and allows only one. " +
-          "Set XONTEL_TOKEN instead of a username/password, ideally for a dedicated integration account.";
+          "XonTel allows only one session per account, and this one is already signed in somewhere. " +
+          "Sign out of that XonTel account in any open browser — this will then reconnect on its own, " +
+          "with no redeploy. Keep the integration's account for the integration alone.";
       } else {
         lastXontelLoginError = parsed?.error || body.slice(0, 200) || `HTTP ${res.status}`;
       }
