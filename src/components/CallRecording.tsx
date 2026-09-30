@@ -113,23 +113,38 @@ export default function CallRecording({ evaluationId }: { evaluationId: number |
           </div>
 
           {/* Several calls to the same number on the same day — let the QA
-              pick rather than silently assuming the top one is right. */}
+              pick rather than silently assuming the top one is right. Any
+              call whose agent matches the one being evaluated is highlighted
+              in red, so a TL scanning the list can spot it (or all of them,
+              if that agent handled the customer more than once) without
+              having to open each recording to check. */}
           {calls.length > 1 && (
             <div className="pt-1">
-              <p className="text-[9px] font-black uppercase tracking-widest text-zinc-400 dark:text-zinc-600 mb-1.5">
-                {calls.length} recordings for this number today
-              </p>
+              <div className="flex items-center justify-between mb-1.5">
+                <p className="text-[9px] font-black uppercase tracking-widest text-zinc-400 dark:text-zinc-600">
+                  {calls.length} recordings for this number today
+                </p>
+                {calls.some(c => c.agent_match) && (
+                  <p className="text-[9px] font-bold text-rose-600 dark:text-rose-400 flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-full bg-rose-500 shrink-0" /> This agent's call
+                  </p>
+                )}
+              </div>
               <div className="flex flex-wrap gap-1.5">
                 {calls.map((c, i) => (
                   <button
                     key={c.xontel_id}
                     onClick={() => setSelected(i)}
                     className={`px-2.5 py-1.5 rounded-lg text-[10px] font-bold transition-all border ${
-                      i === selected
-                        ? 'bg-indigo-600 text-white border-indigo-600'
-                        : 'bg-zinc-50 dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800 text-zinc-500 dark:text-zinc-400 hover:border-indigo-400'
+                      c.agent_match
+                        ? i === selected
+                          ? 'bg-rose-600 text-white border-rose-600 ring-2 ring-rose-300 dark:ring-rose-900/60'
+                          : 'bg-rose-500/10 border-rose-500 text-rose-600 dark:text-rose-400 hover:bg-rose-500/20'
+                        : i === selected
+                          ? 'bg-indigo-600 text-white border-indigo-600'
+                          : 'bg-zinc-50 dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800 text-zinc-500 dark:text-zinc-400 hover:border-indigo-400'
                     }`}
-                    title={`${c.queue} · ${c.agent || 'no agent'}`}
+                    title={`${c.queue} · ${c.agent || 'no agent'}${c.agent_match ? ' — matches the evaluated agent' : ''}`}
                   >
                     {String(c.time).split(' ')[1] || c.time} · {c.duration}
                   </button>

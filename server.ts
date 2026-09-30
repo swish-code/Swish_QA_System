@@ -2494,13 +2494,18 @@ async function startServer() {
           .filter((c: any) => c.record_file_url)
           .map((c: any) => {
             const agentNorm = normalizeAgentName(c.agent);
-            // Names differ across systems, so score a token overlap rather
-            // than demanding equality: "Mohamed Gharieb" vs "M-Ghareeb".
+            // Reuses the account-linking matcher rather than a plain token
+            // overlap: the two systems transliterate the same person
+            // differently ("M-Ghareeb" vs "Mohamed Gharieb"), and a strict
+            // comparison left agent_match false for exactly those calls —
+            // silently breaking the "this is the evaluated agent's call"
+            // highlight for anyone whose name doesn't match letter-for-letter.
             const aTokens = agentNorm.split(" ").filter(Boolean);
             const wTokens = wantAgent.split(" ").filter(Boolean);
             const agentMatch = agentNorm === wantAgent
               || (aTokens.length > 0 && aTokens.every(t => wTokens.includes(t)))
-              || (wTokens.length > 0 && wTokens.every(t => aTokens.includes(t)));
+              || (wTokens.length > 0 && wTokens.every(t => aTokens.includes(t)))
+              || !!linkEvidence(aTokens, wTokens);
             const queueMatch = !!wantBrand && String(c.dst || "").toLowerCase().includes(wantBrand.slice(0, 4));
             return {
               xontel_id: c.id,
