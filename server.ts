@@ -1413,7 +1413,17 @@ async function startServer() {
     };
 
     app.use(cors());
-    app.use(express.json());
+    // Default express.json() limit is 100kb. Attaching even one evaluation
+    // image blows past that by ~14x: without Cloudinary configured, images
+    // are embedded as base64 data: URIs inside the submitted JSON (see
+    // encodeBufferAsDataUri), and a single 1MB image becomes ~1.37MB of
+    // base64 text — so the submit was rejected before reaching any route
+    // handler, surfacing only as a generic "Internal Server Error" (the
+    // request never got far enough to hit a more specific error message).
+    // 20mb covers the worst case (5 images x 1MB, ~6.8MB as base64) with
+    // headroom; it's irrelevant once Cloudinary is configured, since the
+    // submitted payload then carries short URLs instead of image bytes.
+    app.use(express.json({ limit: '20mb' }));
 
     // Automatic Audit Logging Middleware / Event System
     app.use((req, res, next) => {
@@ -5698,9 +5708,22 @@ async function startServer() {
       }
     });
 
-    // Global Error Handler
+    // Global Error Handler — the catch-all for anything a route didn't handle
+    // itself, including body-parser failures (e.g. a request over the JSON
+    // size limit) that never reach a route at all.
     app.use((err: any, req: any, res: any, next: any) => {
       console.error("EXPRESS ERROR:", err);
+      // A payload-too-large error is common enough (an evaluation with
+      // several attached images, in particular) to deserve its own message
+      // instead of the generic one below — the client already shows
+      // `body.error` verbatim, so a vague "Internal Server Error" was
+      // hiding a size problem the QA couldn't do anything about from that
+      // dialog alone.
+      if (err?.type === 'entity.too.large' || err?.status === 413) {
+        return res.status(413).json({
+          error: "This call couldn't be saved because the attached images are too large. Try removing one and attaching it again, or use fewer/smaller images.",
+        });
+      }
       res.status(500).json({ error: "Internal Server Error", message: err.message });
     });
 
