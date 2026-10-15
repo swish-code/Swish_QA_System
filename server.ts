@@ -81,6 +81,9 @@ if (CLOUDINARY_CONFIGURED) {
 // restarts. Supervisors can therefore update it from inside the app (see
 // /api/xontel/base-url) instead of needing a redeploy each time. The env var
 // is the default and the fallback; a stored override wins when present.
+/** First KPI month scored with the per-day calls rule (earlier months unchanged). */
+const PER_DAY_CALLS_RULE_FROM = "2026-11";
+
 const XONTEL_ENV_BASE_URL = (process.env.XONTEL_BASE_URL || "").replace(/\/+$/, "");
 let xontelBaseUrlOverride: string | null = null;
 
@@ -4847,8 +4850,13 @@ async function startServer() {
       // one.) Calls on a day without a completed check-in/out earn no credit,
       // since that day carries no target either. With no attendance data at
       // all, fall back to the legacy monthly total against the static target.
+      // The per-day rule starts with the 2026-11 month and is NOT applied
+      // retroactively: every earlier month keeps the original cumulative
+      // calculation, so no past number changes. (month is YYYY-MM, which
+      // compares correctly as a string.)
+      const perDayRule = month >= PER_DAY_CALLS_RULE_FROM;
       let callsCredited = 0;
-      if (attendedDays > 0) {
+      if (perDayRule && attendedDays > 0) {
         for (const date of sortedDates) {
           if (!attendedDates.has(date)) continue;
           const dayCount = overrideMap.has(date) ? (overrideMap.get(date) || 0) : (actualMap.get(date) || 0);
@@ -4950,6 +4958,7 @@ async function startServer() {
           actual: callsActual,
           // What actually earned score: each day capped at its own target.
           credited: callsCredited,
+          per_day_rule: perDayRule,
           target: effectiveCallsTarget,
           attended_days: attendedDays,
           per_day_target: perDayTarget,

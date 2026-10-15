@@ -27,6 +27,8 @@ type Detail = {
     actual: number;
     /** Calls that earned score: each day capped at its own target. */
     credited?: number;
+    /** True only for months scored with the per-day rule (2026-11 onward). */
+    per_day_rule?: boolean;
     target: number;
     attended_days?: number;
     per_day_target?: number;
@@ -143,7 +145,7 @@ export default function QAKPIs() {
           QA: name,
           Month: d.month,
           'Calls Logged': d.calls.actual,
-          'Calls Counted': d.calls.credited ?? d.calls.actual,
+          'Calls Counted': d.calls.per_day_rule ? (d.calls.credited ?? d.calls.actual) : d.calls.actual,
           'Calls Target': d.calls.target,
           'Calls Score': d.calls.score,
           'Calls Weight %': (d.calls.weight * 100).toFixed(0),
@@ -385,7 +387,9 @@ function DetailPanel({ detail, qaName, onUpdated }: { detail: Detail; qaName: st
             ['Logged', `${detail.calls.actual}`],
             // Extra calls on a day don't cover a shortfall on another, so
             // this can be lower than Logged.
-            ['Counted', `${detail.calls.credited ?? detail.calls.actual}`],
+            ...(detail.calls.per_day_rule
+              ? [['Counted', `${detail.calls.credited ?? detail.calls.actual}`] as [string, string]]
+              : []),
             ['Target', `${detail.calls.target}`],
             ['Attended days', `${detail.calls.attended_days}`],
             ['Per day', `${detail.calls.per_day_target ?? 35}`],
