@@ -4828,16 +4828,38 @@ async function startServer() {
         }
       }
 
-      const attendedRow = await db.prepare(
-        `SELECT COUNT(*) AS c FROM attendance_records
+      const attendedRows = await db.prepare(
+        `SELECT DISTINCT date FROM attendance_records
          WHERE user_id = ? AND date >= ? AND date <= ?
            AND check_in_at IS NOT NULL AND check_out_at IS NOT NULL`
-      ).get(qaId, monthStart, monthEnd) as any;
-      const attendedDays = Number(attendedRow?.c || 0);
+      ).all(qaId, monthStart, monthEnd) as any[];
+      const attendedDates = new Set<string>(attendedRows.map(r => String(r.date)));
+      const attendedDays = attendedDates.size;
       const perDayTarget = Number(cfg.calls_per_attended_day) || 35;
       const dynamicTarget = attendedDays * perDayTarget;
       const effectiveCallsTarget = attendedDays > 0 ? dynamicTarget : cfg.calls_target;
-      const callsScore = Math.min(100, (callsActual / Math.max(1, effectiveCallsTarget)) * 100);
+
+      // Each attended day is scored ON ITS OWN: a day's credit is capped at
+      // that day's target, so a surplus on one day can never make up a
+      // shortfall on another — a day below target stays a shortfall and
+      // lowers the score. (The score used to divide the month's total calls
+      // by the month's total target, which let a heavy day cover a light
+      // one.) Calls on a day without a completed check-in/out earn no credit,
+      // since that day carries no target either. With no attendance data at
+      // all, fall back to the legacy monthly total against the static target.
+      let callsCredited = 0;
+      if (attendedDays > 0) {
+        for (const date of sortedDates) {
+          if (!attendedDates.has(date)) continue;
+          const dayCount = overrideMap.has(date) ? (overrideMap.get(date) || 0) : (actualMap.get(date) || 0);
+          callsCredited += Math.min(dayCount, perDayTarget);
+        }
+        // An attended day with no calls at all is absent from sortedDates
+        // and correctly adds 0 above.
+      } else {
+        callsCredited = callsActual;
+      }
+      const callsScore = Math.min(100, (callsCredited / Math.max(1, effectiveCallsTarget)) * 100);
 
       // ----- Duration -----
       // Sum (last_seen_at - login_at) for all sessions in the month.
@@ -4926,6 +4948,8 @@ async function startServer() {
         config: cfg,
         calls: {
           actual: callsActual,
+          // What actually earned score: each day capped at its own target.
+          credited: callsCredited,
           target: effectiveCallsTarget,
           attended_days: attendedDays,
           per_day_target: perDayTarget,
