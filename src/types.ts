@@ -21,6 +21,8 @@ export interface User {
   allowed_departments?: string[];
   /** QA scope — list of brand values this QA may view (deny-by-default if empty). */
   allowed_brands?: string[];
+  /** Agent only: QA is expected to monitor this agent (Agent Coverage KPI roster). */
+  qa_monitored?: boolean;
 }
 
 export interface FormConfig {

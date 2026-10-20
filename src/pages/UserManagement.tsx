@@ -15,6 +15,8 @@ type FormState = {
   cc_supervisor_id: string;
   allowed_departments: string[];
   allowed_brands: string[];
+  /** Agent only: QA is expected to monitor this agent (Agent Coverage KPI roster). */
+  qa_monitored: boolean;
 };
 
 const initialForm = (): FormState => ({
@@ -27,6 +29,7 @@ const initialForm = (): FormState => ({
   cc_supervisor_id: '',
   allowed_departments: [],
   allowed_brands: [],
+  qa_monitored: false,
 });
 
 export default function UserManagement() {
@@ -86,6 +89,7 @@ export default function UserManagement() {
       cc_supervisor_id: (u as any).cc_supervisor_id ? String((u as any).cc_supervisor_id) : '',
       allowed_departments: u.allowed_departments || [],
       allowed_brands: u.allowed_brands || [],
+      qa_monitored: !!(u as any).qa_monitored,
     });
     setShowModal(true);
   };
@@ -440,6 +444,24 @@ export default function UserManagement() {
                         <option key={tl.id} value={tl.id}>{tl.display_name.toUpperCase()}</option>
                       ))}
                     </select>
+
+                    {/* The roster behind the Agent Coverage KPI: tick the agents
+                        whose calls QA is expected to listen to. Untick anyone who
+                        has left, so they stop counting against the average. */}
+                    <label className="flex items-start gap-3 cursor-pointer select-none rounded-2xl border border-slate-200 dark:border-zinc-800 bg-slate-50 dark:bg-zinc-900/50 px-5 py-4">
+                      <input
+                        type="checkbox"
+                        className="mt-0.5 h-4 w-4 accent-indigo-600"
+                        checked={formData.qa_monitored}
+                        onChange={(e) => setFormData({ ...formData, qa_monitored: e.target.checked })}
+                      />
+                      <span>
+                        <span className="block text-xs font-black text-zinc-900 dark:text-white uppercase tracking-widest">Monitored by QA</span>
+                        <span className="block text-[11px] text-zinc-500 mt-0.5 normal-case tracking-normal font-medium">
+                          Counts in the Agent Coverage KPI. Leave unticked for agents who left or duplicate accounts.
+                        </span>
+                      </span>
+                    </label>
                   </div>
                 )}
 

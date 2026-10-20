@@ -20,6 +20,7 @@ import {
   Sparkles,
   Briefcase,
   BookOpen,
+  Target,
   X
 } from 'lucide-react';
 import { NavLink, useNavigate } from 'react-router-dom';
@@ -66,6 +67,7 @@ export default function Sidebar({ mobileOpen = false, onMobileClose }: SidebarPr
     { name: 'Drop Point', icon: BarChart3, path: '/drop-point', roles: ['qa', 'supervisor', 'cc_supervisor', 'tl'] },
     { name: 'WOW Calls', icon: Sparkles, path: '/wow-calls', roles: ['qa', 'supervisor', 'cc_supervisor', 'tl'] },
     { name: 'QA KPIs', icon: Trophy, path: '/qa-kpis', roles: ['qa', 'supervisor'] },
+    { name: 'QA Scorecard', icon: Target, path: '/qa-scorecard', roles: ['qa', 'supervisor'] },
     { name: 'TL KPIs', icon: Trophy, path: '/tl-kpis', roles: ['cc_supervisor'] },
     { name: 'Accuracy Cases', icon: ShieldCheck, path: '/accuracy-cases', roles: ['qa', 'tl', 'supervisor'] },
     { name: 'Call Recordings', icon: Headphones, path: '/call-recordings', roles: ['qa', 'tl', 'supervisor', 'cc_supervisor'] },

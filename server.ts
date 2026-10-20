@@ -2,6 +2,7 @@ import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import { createDb } from "./db";
+import { computeScorecard } from "./qaScorecard";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import cors from "cors";
@@ -524,6 +525,8 @@ async function startServer() {
     // Call-Center Supervisor link — TLs report to a single cc_supervisor.
     // NULL on a TL = unassigned (visible to every cc_supervisor for now).
     try { await db.exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS cc_supervisor_id INTEGER"); } catch(e) {}
+    // 1 = an agent QA is expected to monitor (Agent Coverage KPI denominator).
+    try { await db.exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS qa_monitored INTEGER DEFAULT 0"); } catch(e) {}
 
     // WOW Calls — QA can flag an exceptional call as a "WOW" for the
     // company-wide showcase page. Tri-state boolean stored as INTEGER for
@@ -1084,6 +1087,48 @@ async function startServer() {
       }
     } catch (err) {
       console.error('call_type dedup migration failed:', err);
+    }
+
+    // ----------------------------------------------------------------
+    // "Monitored by QA" roster — the call-center agents whose calls QA is
+    // expected to listen to. It is the denominator of the Agent Coverage KPI,
+    // and it can't be derived from `status` (every agent account is
+    // 'active', including duplicates and people who have left), so it is an
+    // explicit flag a supervisor maintains in User Management.
+    //
+    // Seeded ONCE from the roster the business confirmed on 2026-10-20 and
+    // then left alone — the marker stops a restart from re-ticking anyone a
+    // supervisor has since un-ticked. Matched by id, with the name checked as
+    // well so a re-numbered database can never flag the wrong person.
+    try {
+      const QA_ROSTER_MARKER = 'qa_monitored_seed_2026_10';
+      const seeded = await db.prepare(
+        "SELECT id FROM form_settings WHERE field_type = '_meta' AND value = ?"
+      ).get(QA_ROSTER_MARKER) as any;
+      if (!seeded) {
+        const ROSTER: [number, string][] = [
+          [41, 'Marwan Adel'], [59, 'Essam Barakat'], [36, 'Mahmoud Ahmed Hassan'], [39, 'Mahmoud Hamed'],
+          [38, 'Abdelwahab Gomaa'], [53, 'Mohamed Gharieb'], [54, 'Mohamed Shokry'], [44, 'Ahmed Alaa'],
+          [49, 'Soliman Ahmed'], [55, 'Muhammed Gaber'], [50, 'Abdallah Fathy'], [46, 'Ahmed Husseinibrahem'],
+          [37, 'Samah Yasser'], [51, 'Aya Ramadan'], [24, 'Ahmed Bader'], [31, 'Yousif Hamdy'],
+          [47, 'Mohamed Esmael'], [30, 'Walaa zain'], [27, 'Malak Hany'], [40, 'Mahmoud Kamal'],
+          [23, 'Abdullah Mahmoud'], [67, 'Ahmed Wael'], [63, 'Mohamed Youssri'], [66, 'Ahmed Bekhiat'],
+          [64, 'Ahmed Gheriany'], [65, 'Ahmed Osman'], [60, 'Abdullah Mahmoud'], [29, 'Shref Ouda'],
+        ];
+        let flagged = 0;
+        for (const [id, name] of ROSTER) {
+          const r = await db.prepare(
+            "UPDATE users SET qa_monitored = 1 WHERE id = ? AND role = 'agent' AND LOWER(TRIM(display_name)) = LOWER(?)"
+          ).run(id, name);
+          flagged += Number(r.changes || 0);
+        }
+        await db.prepare(
+          "INSERT INTO form_settings (field_type, label_en, value, is_active, sort_order) VALUES ('_meta', 'QA monitored roster seeded', ?, 0, 0)"
+        ).run(QA_ROSTER_MARKER);
+        console.log(`QA monitored roster seeded: ${flagged}/${ROSTER.length} agents flagged`);
+      }
+    } catch (err) {
+      console.error('QA monitored roster seed failed:', err);
     }
 
     // ----------------------------------------------------------------
@@ -1995,18 +2040,19 @@ async function startServer() {
     // Users Management
     app.get("/api/users", async (req, res) => {
       const users = await db.prepare(
-        "SELECT id, display_name, username, role, department, tl_id, cc_supervisor_id, allowed_departments, allowed_brands FROM users"
+        "SELECT id, display_name, username, role, department, tl_id, cc_supervisor_id, allowed_departments, allowed_brands, qa_monitored FROM users"
       ).all() as any[];
       // Parse JSON columns so the client gets real arrays.
       res.json(users.map(u => ({
         ...u,
         allowed_departments: parseJsonArray(u.allowed_departments),
         allowed_brands: parseJsonArray(u.allowed_brands),
+        qa_monitored: Number(u.qa_monitored) === 1,
       })));
     });
 
     app.post("/api/users", async (req, res) => {
-      const { display_name, username, password, role, department, tl_id, cc_supervisor_id, allowed_departments, allowed_brands } = req.body;
+      const { display_name, username, password, role, department, tl_id, cc_supervisor_id, allowed_departments, allowed_brands, qa_monitored } = req.body;
       const hashedPassword = bcrypt.hashSync(password, 10);
       // QAs store departments + brands. TLs store brands only (their team
       // scope already comes from agent.tl_id) + an optional cc_supervisor_id.
@@ -2021,6 +2067,9 @@ async function startServer() {
         await db.prepare(
           "INSERT INTO users (display_name, username, password, role, department, tl_id, cc_supervisor_id, allowed_departments, allowed_brands) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
         ).run(display_name, username, hashedPassword, role, department, tl_id || null, ccSupId, depsJson, brandsJson);
+        if (role === 'agent' && qa_monitored === true) {
+          await db.prepare("UPDATE users SET qa_monitored = 1 WHERE username = ?").run(username);
+        }
         res.json({ success: true });
       } catch (e) {
         res.status(400).json({ error: "Username already exists" });
@@ -2029,7 +2078,7 @@ async function startServer() {
 
     app.put("/api/users/:id", async (req, res) => {
       try {
-        const { display_name, username, password, role, department, tl_id, cc_supervisor_id, allowed_departments, allowed_brands } = req.body;
+        const { display_name, username, password, role, department, tl_id, cc_supervisor_id, allowed_departments, allowed_brands, qa_monitored } = req.body;
         const userId = req.params.id;
 
         const existing = await db.prepare("SELECT id FROM users WHERE id = ?").get(userId) as any;
@@ -2056,6 +2105,13 @@ async function startServer() {
                 cc_supervisor_id = ?, allowed_departments = ?, allowed_brands = ?
             WHERE id = ?
           `).run(display_name, username, role, department, tl_id || null, ccSupId, depsJson, brandsJson, userId);
+        }
+        // Only touched when the client sent it, so an older client that
+        // predates the flag can't silently clear the roster. Meaningful for
+        // agents only; any other role is always 0.
+        if (typeof qa_monitored === 'boolean' || role !== 'agent') {
+          await db.prepare("UPDATE users SET qa_monitored = ? WHERE id = ?")
+            .run(role === 'agent' && qa_monitored === true ? 1 : 0, userId);
         }
         res.json({ success: true });
       } catch (e: any) {
@@ -4972,6 +5028,86 @@ async function startServer() {
         total_score: Math.round(totalScore * 10) / 10,
       };
     };
+
+    // QA team scorecard (Call Coverage / Agent Coverage / Evaluation Accuracy).
+    // The maths lives in qaScorecard.ts as a pure function so the shipped code
+    // can be run against real rows and compared with an independent count.
+    // A supervisor sees every QA; a QA sees only their own row (the team and
+    // agent-coverage figures are team-level and shown to both).
+    const loadScorecard = async (month: string) => {
+      const [y, m] = month.split('-').map(Number);
+      const lastDay = new Date(y, m, 0).getDate();
+      const monthStart = `${month}-01`;
+      const monthEnd = `${month}-${String(lastDay).padStart(2, '0')}`;
+
+      const qas = await db.prepare(
+        "SELECT id, display_name FROM users WHERE role = 'qa' ORDER BY display_name"
+      ).all() as any[];
+      const evaluations = await db.prepare(
+        `SELECT id, qa_id, agent_id, created_at::date::text AS date, final_score
+         FROM evaluations
+         WHERE created_at::date::text >= ? AND created_at::date::text <= ?`
+      ).all(monthStart, monthEnd) as any[];
+      const attendance = await db.prepare(
+        `SELECT user_id, date FROM attendance_records
+         WHERE date >= ? AND date <= ? AND check_in_at IS NOT NULL AND check_out_at IS NOT NULL`
+      ).all(monthStart, monthEnd) as any[];
+      const agentRows = await db.prepare(
+        "SELECT id, display_name, qa_monitored FROM users WHERE role = 'agent'"
+      ).all() as any[];
+      const escalationLogs = await db.prepare(
+        "SELECT id, evaluation_id, role, action, old_score FROM escalation_logs"
+      ).all() as any[];
+      // When each agent was FIRST evaluated by anyone — used to tell a joiner
+      // who hadn't started yet apart from a roster agent who was missed.
+      const firstEvals = await db.prepare(
+        "SELECT agent_id, MIN(created_at::date::text) AS first_on FROM evaluations GROUP BY agent_id"
+      ).all() as any[];
+      const firstEvalOf = new Map<number, string>(firstEvals.map(r => [Number(r.agent_id), String(r.first_on)]));
+
+      return computeScorecard({
+        currentMonth: new Date().toISOString().slice(0, 7),
+        month,
+        qas: qas.map(q => ({ id: Number(q.id), display_name: String(q.display_name) })),
+        evaluations: evaluations.map(e => ({
+          id: Number(e.id), qa_id: Number(e.qa_id), agent_id: Number(e.agent_id),
+          date: String(e.date), final_score: e.final_score === null ? null : Number(e.final_score),
+        })),
+        attendance: attendance.map(a => ({ user_id: Number(a.user_id), date: String(a.date) })),
+        agents: agentRows.map(a => ({
+          id: Number(a.id), display_name: String(a.display_name), monitored: Number(a.qa_monitored) === 1,
+          first_evaluated_on: firstEvalOf.get(Number(a.id)) ?? null,
+        })),
+        escalationLogs: escalationLogs.map(l => ({
+          id: Number(l.id), evaluation_id: Number(l.evaluation_id), role: String(l.role),
+          action: String(l.action), old_score: l.old_score === null ? null : Number(l.old_score),
+        })),
+      });
+    };
+
+    app.get("/api/kpi/qa-scorecard", async (req, res) => {
+      try {
+        const month = String(req.query.month || new Date().toISOString().slice(0, 7));
+        if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
+          return res.status(400).json({ error: "month must look like 2026-10" });
+        }
+        // Role comes from the database, never from the query string.
+        const caller = await db.prepare("SELECT id, role FROM users WHERE id = ?").get(req.query.user_id) as any;
+        if (!caller || !['supervisor', 'qa'].includes(caller.role)) {
+          return res.status(403).json({ error: "Not authorised." });
+        }
+        const sc: any = await loadScorecard(month);
+        if (caller.role === 'qa') {
+          sc.qa_rows = sc.qa_rows.filter((r: any) => Number(r.qa_id) === Number(caller.id));
+          // The team-wide list of disputed calls names other QAs — drop it.
+          sc.team.accuracy.overturned_calls = [];
+        }
+        res.json(sc);
+      } catch (e: any) {
+        console.error('QA scorecard failed:', e);
+        res.status(500).json({ error: "Could not compute the scorecard." });
+      }
+    });
 
     // Single QA — used by self-view and detail drill-in.
     app.get("/api/kpi/qa/:user_id", async (req, res) => {

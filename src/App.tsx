@@ -19,6 +19,7 @@ import Notifications from './pages/Notifications';
 import ActivityAudit from './pages/ActivityAudit';
 import Analysis from './pages/Analysis';
 import QAKPIs from './pages/QAKPIs';
+import QAScorecard from './pages/QAScorecard';
 import AccuracyCases from './pages/AccuracyCases';
 import WOWCalls from './pages/WOWCalls';
 import CCOperations from './pages/CCOperations';
@@ -80,6 +81,7 @@ export default function App() {
           <Route path="/analysis" element={<ProtectedRoute><Analysis /></ProtectedRoute>} />
           <Route path="/settings/form" element={<ProtectedRoute><FormSettings /></ProtectedRoute>} />
           <Route path="/qa-kpis" element={<ProtectedRoute><QAKPIs /></ProtectedRoute>} />
+          <Route path="/qa-scorecard" element={<ProtectedRoute><QAScorecard /></ProtectedRoute>} />
           <Route path="/accuracy-cases" element={<ProtectedRoute><AccuracyCases /></ProtectedRoute>} />
           <Route path="/wow-calls" element={<ProtectedRoute><WOWCalls /></ProtectedRoute>} />
           <Route path="/cc-operations" element={<ProtectedRoute><CCOperations /></ProtectedRoute>} />
