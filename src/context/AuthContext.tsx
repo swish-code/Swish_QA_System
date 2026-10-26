@@ -40,11 +40,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (cancelled) return;
       if (document.hidden) return;
       try {
-        await fetch('/api/sessions/heartbeat', {
+        const res = await fetch('/api/sessions/heartbeat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ session_id: parseInt(sessionId, 10) }),
         });
+        // A supervisor deactivated this account while it was signed in:
+        // end the session here rather than letting it keep working.
+        if (res.status === 403) {
+          const body = await res.json().catch(() => ({} as any));
+          if (body?.deactivated) {
+            cancelled = true;
+            localStorage.removeItem('token');
+            localStorage.removeItem('user');
+            localStorage.removeItem('session_id');
+            setUser(null);
+            alert('Your account has been deactivated. Please contact your supervisor.');
+          }
+        }
       } catch {}
     };
     ping(); // immediate first ping

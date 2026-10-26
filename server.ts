@@ -1872,6 +1872,11 @@ async function startServer() {
       if (!user || !bcrypt.compareSync(password, user.password)) {
         return res.status(401).json({ error: "Invalid credentials" });
       }
+      // Checked only AFTER the password is right, so this message can't be
+      // used to discover which usernames belong to former staff.
+      if (String(user.status || 'active') === 'inactive') {
+        return res.status(403).json({ error: "This account has been deactivated. Please contact your supervisor." });
+      }
       const token = jwt.sign({ id: user.id, role: user.role }, JWT_SECRET);
 
       // Open a session row for KPI Duration tracking. Wrapped in try/catch
@@ -1997,6 +2002,17 @@ async function startServer() {
       try {
         const { session_id } = req.body;
         if (!session_id) return res.status(400).json({ error: "session_id required" });
+
+        // This ping is the one thing every open browser tab already sends,
+        // so it is where a deactivation reaches someone who is signed in
+        // right now: the client sees `deactivated` and logs itself out.
+        const owner = await db.prepare(
+          "SELECT u.status FROM user_sessions s JOIN users u ON u.id = s.user_id WHERE s.id = ?"
+        ).get(session_id) as any;
+        if (owner && String(owner.status || 'active') === 'inactive') {
+          return res.status(403).json({ error: "This account has been deactivated.", deactivated: true });
+        }
+
         await db.prepare(
           `UPDATE user_sessions
            SET last_seen_at = CURRENT_TIMESTAMP,
@@ -2038,17 +2054,86 @@ async function startServer() {
     });
 
     // Users Management
+    // Deactivated accounts (people who left) are hidden from this list by
+    // default, which is what every picker and filter in the app reads — so
+    // they vanish everywhere at once. Only User Management asks for them
+    // back (?include_inactive=1) so a supervisor can reactivate someone.
     app.get("/api/users", async (req, res) => {
+      const includeInactive = String(req.query.include_inactive || '') === '1';
       const users = await db.prepare(
-        "SELECT id, display_name, username, role, department, tl_id, cc_supervisor_id, allowed_departments, allowed_brands, qa_monitored FROM users"
+        "SELECT id, display_name, username, role, department, tl_id, cc_supervisor_id, allowed_departments, allowed_brands, qa_monitored, status FROM users"
       ).all() as any[];
       // Parse JSON columns so the client gets real arrays.
-      res.json(users.map(u => ({
-        ...u,
-        allowed_departments: parseJsonArray(u.allowed_departments),
-        allowed_brands: parseJsonArray(u.allowed_brands),
-        qa_monitored: Number(u.qa_monitored) === 1,
-      })));
+      res.json(users
+        .filter(u => includeInactive || String(u.status || 'active') !== 'inactive')
+        .map(u => ({
+          ...u,
+          status: String(u.status || 'active'),
+          allowed_departments: parseJsonArray(u.allowed_departments),
+          allowed_brands: parseJsonArray(u.allowed_brands),
+          qa_monitored: Number(u.qa_monitored) === 1,
+        })));
+    });
+
+    // Deactivate / reactivate an account. Nothing is deleted: the person's
+    // evaluations, escalations and history stay exactly as they were — they
+    // simply stop being listed or selectable, and can no longer sign in.
+    app.put("/api/users/:id/status", async (req, res) => {
+      try {
+        const { status, actor_id } = req.body;
+        const targetId = Number(req.params.id);
+        if (status !== 'active' && status !== 'inactive') {
+          return res.status(400).json({ error: "status must be 'active' or 'inactive'." });
+        }
+        // The actor's role comes from the database, never from the request.
+        const actor = await db.prepare("SELECT id, display_name, role FROM users WHERE id = ?").get(actor_id) as any;
+        if (!actor || actor.role !== 'supervisor') {
+          return res.status(403).json({ error: "Only a supervisor can deactivate or reactivate accounts." });
+        }
+        const target = await db.prepare("SELECT id, display_name, role, status FROM users WHERE id = ?").get(targetId) as any;
+        if (!target) return res.status(404).json({ error: "User not found." });
+
+        if (status === 'inactive') {
+          if (Number(actor.id) === targetId) {
+            return res.status(400).json({ error: "You can't deactivate your own account." });
+          }
+          if (target.role === 'supervisor') {
+            const remaining = await db.prepare(
+              "SELECT COUNT(*) AS c FROM users WHERE role = 'supervisor' AND COALESCE(status, 'active') <> 'inactive' AND id <> ?"
+            ).get(targetId) as any;
+            if (Number(remaining?.c || 0) === 0) {
+              return res.status(400).json({ error: "This is the last active supervisor — at least one must stay active." });
+            }
+          }
+        }
+
+        // A deactivated agent also leaves the QA-monitored roster, so the
+        // Agent Coverage KPI stops expecting calls for someone who is gone.
+        await db.prepare(
+          status === 'inactive'
+            ? "UPDATE users SET status = 'inactive', qa_monitored = 0 WHERE id = ?"
+            : "UPDATE users SET status = 'active' WHERE id = ?"
+        ).run(targetId);
+
+        try {
+          await db.prepare(
+            `INSERT INTO audit_logs (user_id, user_name, action_type, section, details, ip_address, user_agent, status)
+             VALUES (?, ?, ?, 'User Management', ?, ?, ?, 'success')`
+          ).run(
+            actor.id, actor.display_name,
+            status === 'inactive' ? 'DEACTIVATE_USER' : 'REACTIVATE_USER',
+            `${status === 'inactive' ? 'Deactivated' : 'Reactivated'} ${target.role} account "${target.display_name}" (#${targetId})`,
+            (req.headers['x-forwarded-for'] as string) || req.socket?.remoteAddress || '',
+            (req.headers['user-agent'] as string) || ''
+          );
+        } catch (e) {
+          console.error('audit entry for status change failed:', e);
+        }
+        res.json({ success: true, status });
+      } catch (e: any) {
+        console.error('/api/users/:id/status failed:', e);
+        res.status(500).json({ error: "Could not change the account status." });
+      }
     });
 
     app.post("/api/users", async (req, res) => {
@@ -4001,7 +4086,7 @@ async function startServer() {
     app.get("/api/stats/team", async (req, res) => {
       const { role, id, department, user_id } = req.query;
 
-      let agentsQuery = "SELECT id, display_name, department FROM users WHERE role = 'agent'";
+      let agentsQuery = "SELECT id, display_name, department FROM users WHERE role = 'agent' AND COALESCE(status, 'active') <> 'inactive'";
       // Join to agents so we can apply the QA scope on a.department.
       let evalsQuery = "SELECT e.* FROM evaluations e JOIN users a ON e.agent_id = a.id WHERE 1=1";
       let coachingQuery = "SELECT * FROM coaching_sessions";
@@ -4078,7 +4163,7 @@ async function startServer() {
       try {
         const { department, from_date, to_date, user_id, role } = req.query;
 
-        let agentsQuery = "SELECT id, display_name, department FROM users WHERE role = 'agent'";
+        let agentsQuery = "SELECT id, display_name, department FROM users WHERE role = 'agent' AND COALESCE(status, 'active') <> 'inactive'";
         let evalsQuery = "SELECT e.*, a.department, a.display_name as agent_name FROM evaluations e JOIN users a ON e.agent_id = a.id WHERE 1=1";
         let params: any[] = [];
         let agentsParams: any[] = [];
@@ -4336,7 +4421,7 @@ async function startServer() {
         // Build a unified base query joining evaluations to the agent so we
         // can apply the QA scope filter consistently (it joins on a.department).
         let evalsQuery = "SELECT e.* FROM evaluations e JOIN users a ON e.agent_id = a.id WHERE 1=1";
-        let agentsQuery = "SELECT id, display_name, department FROM users WHERE role = 'agent'";
+        let agentsQuery = "SELECT id, display_name, department FROM users WHERE role = 'agent' AND COALESCE(status, 'active') <> 'inactive'";
         let params: any[] = [];
 
         if (role === 'agent') {
@@ -4578,7 +4663,7 @@ async function startServer() {
                  COUNT(e.id) AS call_count
           FROM users u
           LEFT JOIN evaluations e ON ${dateJoinConds.join(' AND ')}
-          WHERE u.role = 'qa' ${userFilter}
+          WHERE u.role = 'qa' AND COALESCE(u.status, 'active') <> 'inactive' ${userFilter}
           GROUP BY u.id, u.display_name, u.username
           ORDER BY call_count DESC, u.display_name ASC
         `).all(...joinParams, ...userFilterParams) as any[];
@@ -5165,7 +5250,7 @@ async function startServer() {
     app.get("/api/kpi/summary", async (req, res) => {
       try {
         const month = (req.query.month as string) || new Date().toISOString().slice(0, 7);
-        const qas = await db.prepare("SELECT id, display_name FROM users WHERE role = 'qa'").all() as any[];
+        const qas = await db.prepare("SELECT id, display_name FROM users WHERE role = 'qa' AND COALESCE(status, 'active') <> 'inactive'").all() as any[];
         // Promise.all parallelises the per-QA computations against the
         // PG connection pool — was previously sequential and stacked up
         // 10+ seconds of waterfall for ~10 QAs. includeDaily=false also
@@ -5208,7 +5293,7 @@ async function startServer() {
         const { user_id, role, from_date, to_date } = req.query;
 
         // Pick the TL roster the caller is allowed to see.
-        let tlsQuery = "SELECT id, display_name, username FROM users WHERE role = 'tl'";
+        let tlsQuery = "SELECT id, display_name, username FROM users WHERE role = 'tl' AND COALESCE(status, 'active') <> 'inactive'";
         const tlsParams: any[] = [];
         if (role === 'cc_supervisor') {
           tlsQuery += " AND cc_supervisor_id = ?";
@@ -5581,7 +5666,7 @@ async function startServer() {
       try {
         const { user_id, role } = req.query;
         const month = (req.query.month as string) || new Date().toISOString().slice(0, 7);
-        let tlsQuery = "SELECT id, display_name FROM users WHERE role = 'tl'";
+        let tlsQuery = "SELECT id, display_name FROM users WHERE role = 'tl' AND COALESCE(status, 'active') <> 'inactive'";
         const tlsParams: any[] = [];
         if (role === 'cc_supervisor') {
           tlsQuery += " AND cc_supervisor_id = ?";
@@ -5846,8 +5931,8 @@ async function startServer() {
         // Group filters options for analytics search controls
         const uniqueBrandsList = (await db.prepare("SELECT DISTINCT brand FROM evaluations WHERE brand IS NOT NULL AND brand != ''").all()).map((r: any) => r.brand);
         const uniqueTypesList = (await db.prepare("SELECT DISTINCT call_type FROM evaluations WHERE call_type IS NOT NULL AND call_type != ''").all()).map((r: any) => r.call_type);
-        const uniqueAgentsList = await db.prepare("SELECT id, display_name FROM users WHERE role = 'agent'").all() as any[];
-        const uniqueQAsList = await db.prepare("SELECT id, display_name FROM users WHERE role = 'qa'").all() as any[];
+        const uniqueAgentsList = await db.prepare("SELECT id, display_name FROM users WHERE role = 'agent' AND COALESCE(status, 'active') <> 'inactive'").all() as any[];
+        const uniqueQAsList = await db.prepare("SELECT id, display_name FROM users WHERE role = 'qa' AND COALESCE(status, 'active') <> 'inactive'").all() as any[];
 
         res.json({
           summary: {

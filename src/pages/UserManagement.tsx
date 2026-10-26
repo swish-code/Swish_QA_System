@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
-import { UserPlus, Search, Edit2, Trash2, Filter, X } from 'lucide-react';
+import { UserPlus, Search, Edit2, Trash2, Filter, X, UserX, UserCheck } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
 import { motion } from 'motion/react';
 import { User, UserRole, Department } from '../types';
 import MultiSelectField from '../components/MultiSelectField';
@@ -40,6 +41,11 @@ export default function UserManagement() {
   const [formData, setFormData] = useState<FormState>(initialForm());
   const [search, setSearch] = useState('');
   const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
+  // Deactivate / reactivate — accounts are never lost, just hidden app-wide.
+  const { user: currentUser } = useAuth();
+  const [showDeactivated, setShowDeactivated] = useState(false);
+  const [confirmStatus, setConfirmStatus] = useState<{ user: User; to: 'active' | 'inactive' } | null>(null);
+  const [statusError, setStatusError] = useState('');
 
   const roles: UserRole[] = ['supervisor', 'cc_supervisor', 'qa', 'tl', 'agent', 'compliance'];
   const departments: Department[] = ['Swish', 'Mishmash', 'FM', 'Complain', 'TEC'];
@@ -51,7 +57,9 @@ export default function UserManagement() {
   }, []);
 
   const fetchUsers = async () => {
-    const res = await fetch('/api/users');
+    // This page is the one place that needs deactivated accounts too (to
+    // reactivate them); every other screen gets the default, active-only list.
+    const res = await fetch('/api/users?include_inactive=1');
     const data = await res.json();
     setUsers(data);
   };
@@ -128,6 +136,23 @@ export default function UserManagement() {
     }
   };
 
+  const handleStatusChange = async () => {
+    if (!confirmStatus) return;
+    setStatusError('');
+    const res = await fetch(`/api/users/${confirmStatus.user.id}/status`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: confirmStatus.to, actor_id: currentUser?.id }),
+    });
+    if (res.ok) {
+      setConfirmStatus(null);
+      fetchUsers();
+    } else {
+      const err = await res.json().catch(() => ({ error: 'Could not change the account status.' }));
+      setStatusError(err.error || 'Could not change the account status.');
+    }
+  };
+
   const handleDelete = async (id: number) => {
     const res = await fetch(`/api/users/${id}`, { method: 'DELETE' });
     if (res.ok) {
@@ -138,12 +163,14 @@ export default function UserManagement() {
 
   const filteredUsers = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return users;
-    return users.filter(u =>
+    const visible = showDeactivated ? users : users.filter(u => u.status !== 'inactive');
+    if (!q) return visible;
+    return visible.filter(u =>
       u.display_name.toLowerCase().includes(q) ||
       u.username.toLowerCase().includes(q)
     );
-  }, [users, search]);
+  }, [users, search, showDeactivated]);
+  const deactivatedCount = useMemo(() => users.filter(u => u.status === 'inactive').length, [users]);
 
   return (
     <div className="space-y-12 max-w-[1600px] mx-auto" dir="ltr">
@@ -180,8 +207,16 @@ export default function UserManagement() {
             />
           </div>
           <div className="flex gap-4">
-            <button className="flex items-center gap-3 px-8 py-4 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl text-[10px] font-black text-zinc-500 uppercase tracking-widest hover:text-indigo-600 dark:hover:text-white transition-all shadow-sm italic hover:border-indigo-600/30">
-              <Filter size={14} /> Filter Users
+            <button
+              onClick={() => setShowDeactivated(v => !v)}
+              className={`flex items-center gap-3 px-8 py-4 border rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all shadow-sm italic ${
+                showDeactivated
+                  ? 'bg-indigo-600 border-indigo-600 text-white'
+                  : 'bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800 text-zinc-500 hover:text-indigo-600 dark:hover:text-white hover:border-indigo-600/30'
+              }`}
+              title="Deactivated accounts are hidden everywhere in the app; show them here to reactivate"
+            >
+              <Filter size={14} /> {showDeactivated ? 'Showing deactivated' : 'Show deactivated'}{deactivatedCount > 0 && ` (${deactivatedCount})`}
             </button>
           </div>
         </div>
@@ -200,7 +235,7 @@ export default function UserManagement() {
             </thead>
             <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800/30">
               {filteredUsers.map((u) => (
-                <tr key={u.id} className="hover:bg-zinc-50/50 dark:hover:bg-indigo-600/5 group">
+                <tr key={u.id} className={`hover:bg-zinc-50/50 dark:hover:bg-indigo-600/5 group ${u.status === 'inactive' ? 'opacity-50' : ''}`}>
                   <td className="px-10 py-8">
                     <div className="flex items-center gap-5">
                       <div className="w-12 h-12 rounded-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 flex items-center justify-center text-[12px] font-black text-indigo-600 group-hover:border-indigo-600 group-hover:scale-105 shadow-sm italic">
@@ -208,7 +243,7 @@ export default function UserManagement() {
                       </div>
                       <div>
                         <p className="text-sm font-black text-zinc-900 dark:text-white tracking-tighter uppercase italic">{u.display_name}</p>
-                        <p className="text-[9px] text-zinc-400 dark:text-zinc-600 font-black uppercase tracking-[0.2em] mt-1">Active User</p>
+                        <p className={`text-[9px] font-black uppercase tracking-[0.2em] mt-1 ${u.status === 'inactive' ? 'text-rose-500' : 'text-zinc-400 dark:text-zinc-600'}`}>{u.status === 'inactive' ? 'Deactivated' : 'Active User'}</p>
                       </div>
                     </div>
                   </td>
@@ -274,6 +309,24 @@ export default function UserManagement() {
                       >
                         <Edit2 size={16} />
                       </button>
+                      {u.status === 'inactive' ? (
+                        <button
+                          onClick={() => { setStatusError(''); setConfirmStatus({ user: u, to: 'active' }); }}
+                          className="p-3 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl text-zinc-400 hover:text-emerald-600 hover:border-emerald-600/30 transition-all shadow-sm"
+                          title="Reactivate account"
+                        >
+                          <UserCheck size={16} />
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => { setStatusError(''); setConfirmStatus({ user: u, to: 'inactive' }); }}
+                          disabled={u.id === currentUser?.id}
+                          className="p-3 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl text-zinc-400 hover:text-amber-600 hover:border-amber-600/30 transition-all shadow-sm disabled:opacity-30 disabled:cursor-not-allowed"
+                          title={u.id === currentUser?.id ? "You can't deactivate your own account" : 'Deactivate account (person left the company)'}
+                        >
+                          <UserX size={16} />
+                        </button>
+                      )}
                       <button
                         onClick={() => setConfirmDelete(u.id)}
                         className="p-3 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl text-zinc-400 hover:text-rose-600 hover:border-rose-600/30 transition-all shadow-sm"
@@ -294,6 +347,39 @@ export default function UserManagement() {
           )}
         </div>
       </div>
+
+      {/* Deactivate / reactivate confirmation */}
+      {confirmStatus && createPortal(
+        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/70 backdrop-blur-md">
+          <div className="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-8 max-w-md w-full shadow-2xl">
+            <h3 className="text-xl font-black text-zinc-900 dark:text-white uppercase tracking-tighter mb-2">
+              {confirmStatus.to === 'inactive' ? 'Deactivate account?' : 'Reactivate account?'}
+            </h3>
+            <p className="text-sm font-bold text-zinc-800 dark:text-zinc-200 mb-2">{confirmStatus.user.display_name}</p>
+            <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-6">
+              {confirmStatus.to === 'inactive'
+                ? "They'll be signed out and unable to log in, and will disappear from every list, filter and report roster. Their past calls and history are kept. You can reactivate them at any time."
+                : "They'll be able to sign in again and will appear in lists and filters like before."}
+            </p>
+            {statusError && <p className="text-xs font-bold text-rose-600 mb-4">{statusError}</p>}
+            <div className="flex gap-3">
+              <button
+                onClick={() => { setConfirmStatus(null); setStatusError(''); }}
+                className="flex-1 py-3 rounded-xl bg-zinc-100 dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300 font-black text-[10px] uppercase tracking-widest"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleStatusChange}
+                className={`flex-1 py-3 rounded-xl text-white font-black text-[10px] uppercase tracking-widest ${confirmStatus.to === 'inactive' ? 'bg-amber-600 hover:bg-amber-500' : 'bg-emerald-600 hover:bg-emerald-500'}`}
+              >
+                {confirmStatus.to === 'inactive' ? 'Deactivate' : 'Reactivate'}
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
 
       {/* Delete confirmation */}
       {confirmDelete !== null && createPortal(
