@@ -43,7 +43,7 @@ export default function UserManagement() {
   const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
   // Deactivate / reactivate — accounts are never lost, just hidden app-wide.
   const { user: currentUser } = useAuth();
-  const [showDeactivated, setShowDeactivated] = useState(false);
+  const [hideDeactivated, setHideDeactivated] = useState(false);
   const [confirmStatus, setConfirmStatus] = useState<{ user: User; to: 'active' | 'inactive' } | null>(null);
   const [statusError, setStatusError] = useState('');
 
@@ -163,13 +163,19 @@ export default function UserManagement() {
 
   const filteredUsers = useMemo(() => {
     const q = search.trim().toLowerCase();
-    const visible = showDeactivated ? users : users.filter(u => u.status !== 'inactive');
+    // Deactivated accounts stay in this list (marked, dimmed, at the bottom) so
+    // a supervisor can always see who was closed and reactivate them. The
+    // optional toggle only hides them when the list gets long.
+    const inactiveRank = (u: User) => (u.status === 'inactive' ? 1 : 0);
+    const visible = (hideDeactivated ? users.filter(u => u.status !== 'inactive') : users)
+      .slice()
+      .sort((a, b) => inactiveRank(a) - inactiveRank(b)); // stable: keeps the existing order within each group
     if (!q) return visible;
     return visible.filter(u =>
       u.display_name.toLowerCase().includes(q) ||
       u.username.toLowerCase().includes(q)
     );
-  }, [users, search, showDeactivated]);
+  }, [users, search, hideDeactivated]);
   const deactivatedCount = useMemo(() => users.filter(u => u.status === 'inactive').length, [users]);
 
   return (
@@ -208,15 +214,15 @@ export default function UserManagement() {
           </div>
           <div className="flex gap-4">
             <button
-              onClick={() => setShowDeactivated(v => !v)}
+              onClick={() => setHideDeactivated(v => !v)}
               className={`flex items-center gap-3 px-8 py-4 border rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all shadow-sm italic ${
-                showDeactivated
+                hideDeactivated
                   ? 'bg-indigo-600 border-indigo-600 text-white'
                   : 'bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800 text-zinc-500 hover:text-indigo-600 dark:hover:text-white hover:border-indigo-600/30'
               }`}
-              title="Deactivated accounts are hidden everywhere in the app; show them here to reactivate"
+              title="Deactivated accounts are listed here, marked, so they can be reactivated. They are hidden everywhere else in the app."
             >
-              <Filter size={14} /> {showDeactivated ? 'Showing deactivated' : 'Show deactivated'}{deactivatedCount > 0 && ` (${deactivatedCount})`}
+              <Filter size={14} /> {hideDeactivated ? 'Deactivated hidden' : 'Hide deactivated'}{deactivatedCount > 0 && ` (${deactivatedCount})`}
             </button>
           </div>
         </div>
@@ -235,14 +241,21 @@ export default function UserManagement() {
             </thead>
             <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800/30">
               {filteredUsers.map((u) => (
-                <tr key={u.id} className={`hover:bg-zinc-50/50 dark:hover:bg-indigo-600/5 group ${u.status === 'inactive' ? 'opacity-50' : ''}`}>
+                <tr key={u.id} className={`hover:bg-zinc-50/50 dark:hover:bg-indigo-600/5 group ${u.status === 'inactive' ? 'opacity-60 bg-rose-500/[0.03]' : ''}`}>
                   <td className="px-10 py-8">
                     <div className="flex items-center gap-5">
                       <div className="w-12 h-12 rounded-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 flex items-center justify-center text-[12px] font-black text-indigo-600 group-hover:border-indigo-600 group-hover:scale-105 shadow-sm italic">
                         {u.display_name.charAt(0)}
                       </div>
                       <div>
-                        <p className="text-sm font-black text-zinc-900 dark:text-white tracking-tighter uppercase italic">{u.display_name}</p>
+                        <p className="text-sm font-black text-zinc-900 dark:text-white tracking-tighter uppercase italic flex items-center gap-2 flex-wrap">
+                          {u.display_name}
+                          {u.status === 'inactive' && (
+                            <span className="not-italic px-2 py-0.5 rounded-md bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-400 text-[8px] font-black tracking-widest">
+                              DEACTIVATED
+                            </span>
+                          )}
+                        </p>
                         <p className={`text-[9px] font-black uppercase tracking-[0.2em] mt-1 ${u.status === 'inactive' ? 'text-rose-500' : 'text-zinc-400 dark:text-zinc-600'}`}>{u.status === 'inactive' ? 'Deactivated' : 'Active User'}</p>
                       </div>
                     </div>
@@ -358,7 +371,7 @@ export default function UserManagement() {
             <p className="text-sm font-bold text-zinc-800 dark:text-zinc-200 mb-2">{confirmStatus.user.display_name}</p>
             <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-6">
               {confirmStatus.to === 'inactive'
-                ? "They'll be signed out and unable to log in, and will disappear from every list, filter and report roster. Their past calls and history are kept. You can reactivate them at any time."
+                ? "They'll be signed out and unable to log in, and will disappear from every list, filter and report roster in the app. They stay visible here in User Management, marked Deactivated. Their past calls and history are kept, and you can reactivate them at any time."
                 : "They'll be able to sign in again and will appear in lists and filters like before."}
             </p>
             {statusError && <p className="text-xs font-bold text-rose-600 mb-4">{statusError}</p>}
