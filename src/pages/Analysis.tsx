@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { useTeam } from '../context/TeamContext';
 import {
   TrendingUp, 
   BarChart3, 
@@ -99,6 +100,7 @@ interface FiltersOptions {
 
 export default function Analysis() {
   const { user } = useAuth();
+  const { team } = useTeam();
   // Filters state
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
@@ -159,7 +161,8 @@ export default function Analysis() {
         status,
         // Caller context so the server can enforce QA scope.
         user_id: String(user?.id || ''),
-        role: user?.role || ''
+        role: user?.role || '',
+        team
       });
 
       const res = await fetch(`/api/stats/analysis?${params.toString()}`);

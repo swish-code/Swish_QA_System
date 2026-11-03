@@ -3,7 +3,7 @@ import { createServer as createViteServer } from "vite";
 import path from "path";
 import { createDb } from "./db";
 import { computeScorecard } from "./qaScorecard";
-import { teamOfDepartment, isCallTypeAllowed, TECHNICAL_CALL_TYPE, TEAM_LABELS } from "./src/teams";
+import { teamOfDepartment, isCallTypeAllowed, TECHNICAL_CALL_TYPE, TEAM_LABELS, normalizeTeam, agentDepartmentSql } from "./src/teams";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import cors from "cors";
@@ -1810,7 +1810,7 @@ async function startServer() {
      * Name kept as buildQAScopeClause for backwards-compat with the many
      * call sites that already use it — the body also handles TLs.
      */
-    const buildQAScopeClause = async (
+    const buildScopeCore = async (
       userId: any,
       role: any,
       aliases: { e: string; agentJoin: string }
@@ -1890,6 +1890,28 @@ async function startServer() {
       }
 
       return { clause: '', params: [] };
+    };
+
+    /**
+     * Scope + QA function filter. `team` is the raw ?team= value:
+     *   undefined       -> no team filter (callers decide their own default)
+     *   'all'           -> no team filter
+     *   customer_care | complaint | technical -> only that function's evaluations
+     * An agent always sees their own evaluations whatever the team value, and
+     * an unknown value falls back to Customer Care rather than leaking all.
+     */
+    const buildQAScopeClause = async (
+      userId: any,
+      role: any,
+      aliases: { e: string; agentJoin: string },
+      team?: any
+    ): Promise<{ clause: string; params: any[] }> => {
+      const base = await buildScopeCore(userId, role, aliases);
+      if (role === 'agent' || team === undefined || team === null || team === '' || team === 'all') return base;
+      return {
+        clause: base.clause + ` AND COALESCE(${aliases.e}.team, 'customer_care') = ? `,
+        params: [...base.params, normalizeTeam(team)],
+      };
     };
 
     // Lets the client show the right size hint / storage note before the QA
@@ -2349,7 +2371,7 @@ async function startServer() {
 
       // QA scope enforcement — restricts to assigned brands + departments.
       // Empty scope = no rows match (deny-by-default).
-      const qaScope = await buildQAScopeClause(user_id, role, { e: 'e', agentJoin: 'a' });
+      const qaScope = await buildQAScopeClause(user_id, role, { e: 'e', agentJoin: 'a' }, req.query.team);
       baseQuery += qaScope.clause;
       params.push(...qaScope.params);
 
@@ -4201,7 +4223,9 @@ async function startServer() {
 
       // QA scope: lock down both the agent list and the eval list.
       const callerId = user_id || id;
-      const qaScope = await buildQAScopeClause(callerId, role, { e: 'e', agentJoin: 'a' });
+      const teamQ = req.query.team ?? 'customer_care';
+      const qaScope = await buildQAScopeClause(callerId, role, { e: 'e', agentJoin: 'a' }, teamQ);
+      if (role !== 'agent') agentsQuery += agentDepartmentSql(teamQ);
       evalsQuery += qaScope.clause;
       evalsParams.push(...qaScope.params);
 
@@ -4293,7 +4317,9 @@ async function startServer() {
 
         // QA scope: even when an explicit department filter is requested,
         // the QA can only ever see their assigned scope.
-        const qaScope = await buildQAScopeClause(user_id, role, { e: 'e', agentJoin: 'a' });
+        const teamQ = req.query.team ?? 'customer_care';
+        const qaScope = await buildQAScopeClause(user_id, role, { e: 'e', agentJoin: 'a' }, teamQ);
+        if (role !== 'agent') agentsQuery += agentDepartmentSql(teamQ);
         evalsQuery += qaScope.clause;
         params.push(...qaScope.params);
 
@@ -4423,7 +4449,7 @@ async function startServer() {
 
         // QA scope: lock the agent list down too so the per-agent rollups
         // can't reference agents outside the assigned departments.
-        const qaScope = await buildQAScopeClause(user_id, role, { e: 'e', agentJoin: 'a' });
+        const qaScope = await buildQAScopeClause(user_id, role, { e: 'e', agentJoin: 'a' }, req.query.team ?? 'customer_care');
 
         // Build WHERE clause dynamically. We always emit "WHERE 1=1" so the
         // QA scope clause (which starts with " AND …") composes cleanly.
@@ -4545,7 +4571,9 @@ async function startServer() {
         // QA: restrict to assigned brands + departments. Also restrict the
         // active-agents list to the same department scope so headline counts
         // line up with what the QA can actually audit.
-        const qaScope = await buildQAScopeClause(user_id, role, { e: 'e', agentJoin: 'a' });
+        const teamQ = req.query.team ?? 'customer_care';
+        const qaScope = await buildQAScopeClause(user_id, role, { e: 'e', agentJoin: 'a' }, teamQ);
+        if (role !== 'agent') agentsQuery += agentDepartmentSql(teamQ);
         evalsQuery += qaScope.clause;
         params.push(...qaScope.params);
 
@@ -5237,7 +5265,8 @@ async function startServer() {
       const evaluations = await db.prepare(
         `SELECT id, qa_id, agent_id, created_at::date::text AS date, final_score
          FROM evaluations
-         WHERE created_at::date::text >= ? AND created_at::date::text <= ?`
+         WHERE created_at::date::text >= ? AND created_at::date::text <= ?
+           AND COALESCE(team, 'customer_care') = 'customer_care'`
       ).all(monthStart, monthEnd) as any[];
       const attendance = await db.prepare(
         `SELECT user_id, date FROM attendance_records
@@ -5252,7 +5281,7 @@ async function startServer() {
       // When each agent was FIRST evaluated by anyone — used to tell a joiner
       // who hadn't started yet apart from a roster agent who was missed.
       const firstEvals = await db.prepare(
-        "SELECT agent_id, MIN(created_at::date::text) AS first_on FROM evaluations GROUP BY agent_id"
+        "SELECT agent_id, MIN(created_at::date::text) AS first_on FROM evaluations WHERE COALESCE(team, 'customer_care') = 'customer_care' GROUP BY agent_id"
       ).all() as any[];
       const firstEvalOf = new Map<number, string>(firstEvals.map(r => [Number(r.agent_id), String(r.first_on)]));
 
@@ -5814,7 +5843,7 @@ async function startServer() {
         const params: any[] = [];
 
         // QA scope — keep analysis honest about what this user can see.
-        const qaScope = await buildQAScopeClause(user_id, role, { e: 'e', agentJoin: 'a' });
+        const qaScope = await buildQAScopeClause(user_id, role, { e: 'e', agentJoin: 'a' }, req.query.team ?? 'customer_care');
         query += qaScope.clause;
         params.push(...qaScope.params);
 

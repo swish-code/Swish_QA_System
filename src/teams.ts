@@ -49,3 +49,27 @@ export function allowedCallTypes(team: TeamKey, allCallTypes: string[]): string[
 export function isCallTypeAllowed(team: TeamKey, callType: string, allCallTypes: string[]): boolean {
   return allowedCallTypes(team, allCallTypes).some(c => c.trim().toLowerCase() === String(callType ?? '').trim().toLowerCase());
 }
+
+export const TEAM_KEYS: TeamKey[] = ['customer_care', 'complaint', 'technical'];
+
+/** Any unknown/garbled value becomes Customer Care, never "everything". */
+export function normalizeTeam(v: unknown): TeamKey {
+  return (TEAM_KEYS as string[]).includes(String(v)) ? (String(v) as TeamKey) : 'customer_care';
+}
+
+/**
+ * SQL fragment restricting a users query (no alias) to one function's agents.
+ * Built only from the fixed department list above, so it is safe to inline.
+ * 'all' (or empty) adds nothing.
+ */
+export function agentDepartmentSql(team: unknown): string {
+  if (team === undefined || team === null || team === '' || team === 'all') return '';
+  const t = normalizeTeam(team);
+  const inList = (t === 'customer_care'
+    ? Object.keys(TEAM_OF_DEPARTMENT).filter(d => TEAM_OF_DEPARTMENT[d] === 'customer_care')
+    : Object.keys(TEAM_OF_DEPARTMENT).filter(d => TEAM_OF_DEPARTMENT[d] === t)
+  ).map(d => "'" + d + "'").join(',');
+  return t === 'customer_care'
+    ? ` AND (department IS NULL OR department NOT IN ('Complain','TEC'))`
+    : ` AND department IN (${inList})`;
+}

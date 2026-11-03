@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import { useAuth } from '../context/AuthContext';
+import { useTeam } from '../context/TeamContext';
 import { NavLink, useNavigate } from 'react-router-dom';
 import StatCard from '../components/StatCard';
 import QACallsCard from '../components/QACallsCard';
@@ -65,6 +66,7 @@ const DATE_PRESETS: { key: string; label: string }[] = [
 
 export default function Dashboard() {
   const { user } = useAuth();
+  const { team } = useTeam();
   const navigate = useNavigate();
   const [evals, setEvals] = useState<any[]>([]);
   const [stats, setStats] = useState<any>(null);
@@ -98,8 +100,8 @@ export default function Dashboard() {
       try {
         const dateQs = `${fromDate ? `&from_date=${fromDate}` : ''}${toDate ? `&to_date=${toDate}` : ''}`;
         const [evalsRes, statsRes] = await Promise.all([
-          fetch(`/api/evaluations?user_id=${user?.id}&role=${user?.role}`),
-          fetch(`/api/stats/dashboard?user_id=${user?.id}&role=${user?.role}${dateQs}`)
+          fetch(`/api/evaluations?user_id=${user?.id}&role=${user?.role}&team=${team}`),
+          fetch(`/api/stats/dashboard?user_id=${user?.id}&role=${user?.role}&team=${team}${dateQs}`)
         ]);
 
         if (!evalsRes.ok || !statsRes.ok) {

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useTeam } from '../context/TeamContext';
 import {
   Sparkles, Search, Eye, Calendar, User, Tag, Trophy,
   ChevronLeft, ChevronRight, ChevronDown
@@ -32,6 +33,7 @@ type Pagination = {
 
 export default function WOWCalls() {
   const { user } = useAuth();
+  const { team } = useTeam();
   const navigate = useNavigate();
 
   const [evaluations, setEvaluations] = useState<Evaluation[]>([]);
@@ -51,6 +53,7 @@ export default function WOWCalls() {
         user_id: String(user.id),
         role: user.role,
         wow_only: '1',
+        team,
         page: String(page),
         limit: String(limit),
       });

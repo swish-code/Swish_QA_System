@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { useTeam } from '../context/TeamContext';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { motion } from 'motion/react';
 import { 
@@ -19,6 +20,7 @@ import StatCard from '../components/StatCard';
 
 export default function LOBDashboard() {
   const { user } = useAuth();
+  const { team } = useTeam();
   const navigate = useNavigate();
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -31,7 +33,7 @@ export default function LOBDashboard() {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/stats/lob?department=${department}&from_date=${dateRange.from}&to_date=${dateRange.to}&user_id=${user?.id || ''}&role=${user?.role || ''}`);
+      const res = await fetch(`/api/stats/lob?team=${team}&department=${department}&from_date=${dateRange.from}&to_date=${dateRange.to}&user_id=${user?.id || ''}&role=${user?.role || ''}`);
       if (!res.ok) throw new Error('LOB data fetch failed');
       const result = await res.json();
       setData(result);

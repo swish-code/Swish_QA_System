@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import * as XLSX from 'xlsx';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useTeam } from '../context/TeamContext';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Bell,
@@ -58,6 +59,7 @@ interface Evaluation {
 
 export default function EscalationManagement() {
   const { user } = useAuth();
+  const { team } = useTeam();
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<'pending' | 'history'>('pending');
   const [escalations, setEscalations] = useState<Evaluation[]>([]);
@@ -159,7 +161,7 @@ export default function EscalationManagement() {
         // The TL pre-approval stage was removed — 'Escalated' is the only
         // in-flight state now.
         const dateQs = `${fromDate ? `&from_date=${fromDate}` : ''}${toDate ? `&to_date=${toDate}` : ''}`;
-        const res = await fetch(`/api/evaluations?user_id=${user?.id}&role=${user?.role}&status=Escalated&limit=1000&page=1${dateQs}`);
+        const res = await fetch(`/api/evaluations?user_id=${user?.id}&role=${user?.role}&team=${team}&status=Escalated&limit=1000&page=1${dateQs}`);
         const result = await res.json();
         setEscalations(result.data || []);
       } else {
@@ -193,7 +195,7 @@ export default function EscalationManagement() {
       const dateQs = `${fromDate ? `&from_date=${fromDate}` : ''}${toDate ? `&to_date=${toDate}` : ''}`;
       const [pendingRes, historyRes] = await Promise.all([
         // Status filtered server-side — see loadData for why.
-        fetch(`/api/evaluations?user_id=${user?.id}&role=${user?.role}&status=Escalated&limit=1000&page=1${dateQs}`),
+        fetch(`/api/evaluations?user_id=${user?.id}&role=${user?.role}&team=${team}&status=Escalated&limit=1000&page=1${dateQs}`),
         fetch('/api/escalations/history'),
       ]);
       const pendingData = (await pendingRes.json()).data || [];

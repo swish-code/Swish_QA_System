@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import * as XLSX from 'xlsx';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from '../context/AuthContext';
+import { useTeam } from '../context/TeamContext';
 import {
   BarChart3,
   Search,
@@ -31,6 +32,7 @@ const todayStr = () => new Date().toISOString().split('T')[0];
 
 export default function DropPoint() {
   const { user } = useAuth();
+  const { team } = useTeam();
   const [reports, setReports] = useState<AgentReport[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -56,6 +58,7 @@ export default function DropPoint() {
       const params = new URLSearchParams({
         user_id: String(user?.id || ''),
         role: user?.role || '',
+        team,
       });
       if (fromDate) params.set('from_date', fromDate);
       if (toDate) params.set('to_date', toDate);

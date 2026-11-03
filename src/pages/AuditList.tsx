@@ -5,6 +5,7 @@ import CoachingRequestDialog from '../components/CoachingRequestDialog';
 import CoachingDetailsDialog from '../components/CoachingDetailsDialog';
 import MultiSelectField from '../components/MultiSelectField';
 import { useAuth } from '../context/AuthContext';
+import { useTeam } from '../context/TeamContext';
 import {
   Search,
   Filter,
@@ -46,6 +47,7 @@ interface PaginationData {
 
 export default function AuditList() {
   const { user } = useAuth();
+  const { team } = useTeam();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   
@@ -158,6 +160,7 @@ export default function AuditList() {
       const queryParams = new URLSearchParams(params);
       queryParams.set('user_id', user?.id?.toString() || '');
       queryParams.set('role', user?.role || '');
+      queryParams.set('team', team);
       
       const res = await fetch(`/api/evaluations?${queryParams.toString()}`);
       if (!res.ok) throw new Error('Failed to fetch evaluations');
@@ -377,6 +380,7 @@ export default function AuditList() {
       const qp = new URLSearchParams(searchParams);
       qp.set('user_id', user?.id?.toString() || '');
       qp.set('role', user?.role || '');
+      qp.set('team', team);
       qp.set('limit', '100000');
       qp.set('page', '1');
 

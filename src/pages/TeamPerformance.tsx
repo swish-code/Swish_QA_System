@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useTeam } from '../context/TeamContext';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { Users, TrendingUp, Target, MessageSquare } from 'lucide-react';
 import StatCard from '../components/StatCard';
@@ -15,6 +16,7 @@ interface TeamStats {
 
 export default function TeamPerformance() {
   const { user } = useAuth();
+  const { team } = useTeam();
   const navigate = useNavigate();
   const [stats, setStats] = useState<TeamStats | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -22,7 +24,7 @@ export default function TeamPerformance() {
   useEffect(() => {
     const fetchStats = async () => {
       try {
-        const res = await fetch(`/api/stats/team?role=${user?.role}&id=${user?.id}&user_id=${user?.id}&department=${user?.department}`);
+        const res = await fetch(`/api/stats/team?team=${team}&role=${user?.role}&id=${user?.id}&user_id=${user?.id}&department=${user?.department}`);
         const data = await res.json();
         setStats(data);
       } catch (err) {

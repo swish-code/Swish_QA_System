@@ -6,12 +6,14 @@ import DraftsButton from './DraftsButton';
 import DraftsPanel from './DraftsPanel';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useTeam, TEAM_KEYS, TEAM_LABELS } from '../context/TeamContext';
 import { User, LogOut, Menu, ArrowLeft } from 'lucide-react';
 
 export default function Layout({ children }: { children: React.ReactNode }) {
   const location = useLocation();
   const navigate = useNavigate();
   const { user, logout } = useAuth();
+  const { team, setTeam, canSwitch } = useTeam();
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
   // Global Back — returns to the previous page with its full state (filters,
@@ -59,6 +61,16 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           </div>
 
           <div className="flex items-center gap-2 sm:gap-6 shrink-0">
+            {canSwitch && (
+              <select
+                value={team}
+                onChange={(e) => setTeam(e.target.value as any)}
+                title="Which QA function the reports show"
+                className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl px-3 py-2 text-[10px] font-black uppercase tracking-widest text-indigo-600 dark:text-emerald-500 outline-none"
+              >
+                {TEAM_KEYS.map(k => <option key={k} value={k}>{TEAM_LABELS[k]}</option>)}
+              </select>
+            )}
             <div className="flex items-center gap-2 sm:gap-3">
               <ThemeToggle />
               <DraftsButton />
@@ -88,7 +100,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
         {/* Page content — heavy AnimatePresence + motion.div removed (was 300ms per nav) */}
         <div className="p-4 sm:p-6 lg:p-8 flex-1 min-w-0">
-          {children}
+          <React.Fragment key={team}>{children}</React.Fragment>
         </div>
       </main>
 
