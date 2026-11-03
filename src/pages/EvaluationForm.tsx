@@ -33,6 +33,7 @@ import { User as UserType } from '../types';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { notifyDraftsChanged } from '../context/DraftsContext';
 import CallRecording from '../components/CallRecording';
+import { teamOfDepartment, allowedCallTypes, TEAM_LABELS, TECHNICAL_CALL_TYPE } from '../teams';
 
 const COMMON_ISSUES = [
   'Wrong Order', 'No Upselling', 'Incomplete Info', 'Delay', 'Poor Listening',
@@ -145,6 +146,10 @@ export default function EvaluationForm() {
     evaluator_id: user?.id || '',
     brand: '',
     call_type: 'New Order',
+    // Technical scorecard SLA: when the case reached the team and when the
+    // action was started (datetime-local strings).
+    tech_received_at: '',
+    tech_initiated_at: '',
     call_direction: '',
     call_category: '',
     call_duration: '',
@@ -253,6 +258,7 @@ export default function EvaluationForm() {
               weight,
               critical: !!cfg.critical,
               category: cfg.category || null,
+              sla_minutes: cfg.sla_minutes != null ? Number(cfg.sla_minutes) : null,
             };
           })
           .filter(Boolean)
@@ -405,6 +411,50 @@ export default function EvaluationForm() {
 
   const isEditMode = id && ((formData.status === 'Escalated' && !isSelfEscalation) || isQaEdit) && (user?.role === 'qa' || user?.role === 'supervisor');
   const isCreation = !id;
+
+  // The agent's department decides the QA function (Customer Care /
+  // Complaint / Technical) and the function decides which scorecards can be
+  // used. The server enforces the same rule; this only keeps the form honest.
+  const selectedAgent = agents.find(a => String(a.id) === String(formData.agent_id));
+  const agentTeam = selectedAgent ? teamOfDepartment(selectedAgent.department) : null;
+  const allCallTypeValues: string[] = formOptions.call_type.map((o: any) => o.value);
+  const visibleCallTypes = formOptions.call_type.filter((o: any) => {
+    if (!agentTeam) return o.value !== TECHNICAL_CALL_TYPE; // no agent yet: don't offer the Technical scorecard
+    if (!isCreation && o.value === formData.call_type) return true; // never hide a saved value
+    return allowedCallTypes(agentTeam, allCallTypeValues).includes(o.value);
+  });
+
+  useEffect(() => {
+    if (!isCreation || !agentTeam) return;
+    const allowed = allowedCallTypes(agentTeam, allCallTypeValues);
+    if (allowed.length > 0 && !allowed.includes(formData.call_type)) {
+      setFormData((prev: any) => ({ ...prev, call_type: allowed[0] }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentTeam, formData.agent_id, formOptions.call_type.length]);
+
+  // Technical SLA: minutes between "received" and "initiated".
+  const isTechnicalCall = formData.call_type === TECHNICAL_CALL_TYPE;
+  const techElapsedMin = (() => {
+    if (!formData.tech_received_at || !formData.tech_initiated_at) return null;
+    const ms = new Date(formData.tech_initiated_at).getTime() - new Date(formData.tech_received_at).getTime();
+    return Number.isFinite(ms) ? Math.round(ms / 600) / 100 : null; // minutes, 2 dp
+  })();
+  const slaItem: any = isTechnicalCall
+    ? formStructure.flatMap((sec: any) => sec.items).find((it: any) => it.sla_minutes != null)
+    : null;
+
+  // Auto-mark the SLA attribute from the two times. The QA can still flip it
+  // manually afterwards (e.g. an external dependency delayed the start).
+  useEffect(() => {
+    if (!isCreation || !slaItem || techElapsedMin == null || techElapsedMin < 0) return;
+    const verdict = techElapsedMin <= slaItem.sla_minutes ? 'Yes' : 'No';
+    setFormData((prev: any) =>
+      prev.responses?.[slaItem.id] === verdict
+        ? prev
+        : { ...prev, responses: { ...prev.responses, [slaItem.id]: verdict } });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [techElapsedMin, slaItem?.id]);
   const isViewingOnly = id && !isEditMode;
 
   useEffect(() => {
@@ -1186,6 +1236,11 @@ export default function EvaluationForm() {
               <option value="">Select Agent</option>
               {agents.map(a => <option key={a.id} value={a.id}>{a.display_name}</option>)}
             </select>
+            {agentTeam && (
+              <p className="text-[9px] font-black uppercase tracking-widest text-indigo-600 dark:text-emerald-500">
+                Team: {TEAM_LABELS[agentTeam]}
+              </p>
+            )}
           </div>
           <div className="space-y-3">
             <label className="text-[9px] font-black text-zinc-400 dark:text-zinc-600 uppercase tracking-widest block">Evaluator</label>
@@ -1219,11 +1274,45 @@ export default function EvaluationForm() {
               className="w-full bg-white dark:bg-zinc-900 border border-zinc-100 dark:border-zinc-800 rounded-xl px-4 py-3 text-xs text-zinc-800 dark:text-white focus:border-indigo-500 outline-none"
             >
               <option value="">Select Type</option>
-              {formOptions.call_type.map((opt: any) => (
+              {visibleCallTypes.map((opt: any) => (
                 <option key={opt.id || opt.value} value={opt.value}>{opt.label}</option>
               ))}
             </select>
           </div>
+          {isTechnicalCall && (
+            <div className="md:col-span-4 grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6 lg:gap-8">
+              <div className="space-y-3">
+                <label className="text-[9px] font-black text-zinc-400 dark:text-zinc-600 uppercase tracking-widest block">Case Received At</label>
+                <input
+                  type="datetime-local"
+                  value={formData.tech_received_at || ''}
+                  disabled={isReadOnly}
+                  onChange={(e) => setFormData({...formData, tech_received_at: e.target.value})}
+                  className="w-full bg-white dark:bg-zinc-900 border border-zinc-100 dark:border-zinc-800 rounded-xl px-4 py-3 text-xs text-zinc-800 dark:text-white focus:border-indigo-500 outline-none dark:inverted-date-icon"
+                />
+              </div>
+              <div className="space-y-3">
+                <label className="text-[9px] font-black text-zinc-400 dark:text-zinc-600 uppercase tracking-widest block">Process Initiated At</label>
+                <input
+                  type="datetime-local"
+                  value={formData.tech_initiated_at || ''}
+                  disabled={isReadOnly}
+                  onChange={(e) => setFormData({...formData, tech_initiated_at: e.target.value})}
+                  className="w-full bg-white dark:bg-zinc-900 border border-zinc-100 dark:border-zinc-800 rounded-xl px-4 py-3 text-xs text-zinc-800 dark:text-white focus:border-indigo-500 outline-none dark:inverted-date-icon"
+                />
+              </div>
+              <div className="space-y-3">
+                <label className="text-[9px] font-black text-zinc-400 dark:text-zinc-600 uppercase tracking-widest block">SLA Result (start within {slaItem?.sla_minutes ?? 3} min)</label>
+                <div className="px-4 py-3 bg-white dark:bg-zinc-900/50 border border-zinc-100 dark:border-zinc-800 rounded-xl text-xs text-zinc-500 dark:text-zinc-400">
+                  {techElapsedMin == null
+                    ? 'Enter both times'
+                    : techElapsedMin < 0
+                      ? 'Initiated before received — check the times'
+                      : `${techElapsedMin} min — ${techElapsedMin <= (slaItem?.sla_minutes ?? 3) ? 'within SLA' : 'SLA missed'}`}
+                </div>
+              </div>
+            </div>
+          )}
           {/* Registration time — recorded automatically by the system when the
               call is logged. Distinct from Call Date (which the QA types and
               may set to the actual call day). Read-only. */}

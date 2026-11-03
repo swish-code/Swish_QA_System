@@ -3,6 +3,7 @@ import { createServer as createViteServer } from "vite";
 import path from "path";
 import { createDb } from "./db";
 import { computeScorecard } from "./qaScorecard";
+import { teamOfDepartment, isCallTypeAllowed, TECHNICAL_CALL_TYPE, TEAM_LABELS } from "./src/teams";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import cors from "cors";
@@ -359,6 +360,13 @@ function encodeBufferAsDataUri(buffer: Buffer, mimetype: string): { url: string;
   };
 }
 
+/** Explains, in the QA's words, why a scorecard can't be used for this agent. */
+function scorecardMismatchMessage(team: ReturnType<typeof teamOfDepartment>): string {
+  if (team === 'technical') return "Technical Team agents can only be evaluated with the Technical scorecard.";
+  if (team === 'complaint') return "Complaint Team agents can only be evaluated with the Complaints scorecard.";
+  return "The Technical scorecard is only for Technical Team agents.";
+}
+
 async function startServer() {
   const app = express();
   // Railway / Heroku / Render inject the actual port to listen on via
@@ -527,6 +535,13 @@ async function startServer() {
     try { await db.exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS cc_supervisor_id INTEGER"); } catch(e) {}
     // 1 = an agent QA is expected to monitor (Agent Coverage KPI denominator).
     try { await db.exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS qa_monitored INTEGER DEFAULT 0"); } catch(e) {}
+    // Which QA function an evaluation belongs to: customer_care | complaint |
+    // technical. Stamped when the call is registered (from the agent's
+    // department at that moment), so a later department change can never
+    // re-file history. The default backfills every existing row as
+    // Customer Care, which is correct: the other two teams had no
+    // evaluations before this column existed.
+    try { await db.exec("ALTER TABLE evaluations ADD COLUMN IF NOT EXISTS team TEXT DEFAULT 'customer_care'"); } catch(e) {}
 
     // WOW Calls — QA can flag an exceptional call as a "WOW" for the
     // company-wide showcase page. Tri-state boolean stored as INTEGER for
@@ -1129,6 +1144,67 @@ async function startServer() {
       }
     } catch (err) {
       console.error('QA monitored roster seed failed:', err);
+    }
+
+    // ----------------------------------------------------------------
+    // Technical Team scorecard (Technical_Team_QA_Scorecard_Draft_V1).
+    // Adds the "Technical" call type and its seven weighted attributes. They
+    // apply ONLY to that call type, so no other scorecard changes. Weights sum
+    // to 100. "Leads to Zero" is No for every attribute, exactly as the draft
+    // states, pending the business's critical-error rules. Runs once.
+    try {
+      const TECH_MARKER = 'technical_scorecard_v1_2026_11';
+      const techDone = await db.prepare(
+        "SELECT id FROM form_settings WHERE field_type = '_meta' AND value = ?"
+      ).get(TECH_MARKER) as any;
+      if (!techDone) {
+        const ctRow = await db.prepare(
+          "SELECT id FROM form_settings WHERE field_type = 'call_type' AND LOWER(value) = LOWER(?)"
+        ).get(TECHNICAL_CALL_TYPE) as any;
+        if (ctRow) {
+          await db.prepare("UPDATE form_settings SET is_active = 1 WHERE id = ?").run(ctRow.id);
+        } else {
+          await db.prepare(
+            "INSERT INTO form_settings (field_type, label_en, label_ar, value, is_active, sort_order) VALUES ('call_type', ?, ?, ?, 1, 0)"
+          ).run(TECHNICAL_CALL_TYPE, TECHNICAL_CALL_TYPE, TECHNICAL_CALL_TYPE);
+        }
+
+        const TECH_QUESTIONS: { label: string; weight: number; category: 'CTS' | 'CTC' | 'CTB'; sla_minutes?: number }[] = [
+          { label: 'Information Accuracy & Communication', weight: 25, category: 'CTS' },
+          { label: 'Database & System Accuracy', weight: 20, category: 'CTB' },
+          { label: 'Order Identification & Verification', weight: 15, category: 'CTS' },
+          { label: 'Aggregator Coordination & Follow-up', weight: 15, category: 'CTS' },
+          { label: 'Customer Communication & Handling', weight: 10, category: 'CTC' },
+          // Measures the time to START the action, not to close the case.
+          { label: 'SLA Compliance – Process Initiation', weight: 10, category: 'CTS', sla_minutes: 3 },
+          { label: 'SOP Compliance & Process Adherence', weight: 5, category: 'CTS' },
+        ];
+        let order = 32;
+        for (const q of TECH_QUESTIONS) {
+          const exists = await db.prepare(
+            "SELECT id FROM form_settings WHERE field_type = 'eval_question' AND label_en = ?"
+          ).get(q.label) as any;
+          if (exists) continue; // idempotent against a partial earlier run
+          const cfg: any = {
+            section: 'evaluation_criteria',
+            weight: q.weight,
+            critical: false,
+            category: q.category,
+            call_types: [TECHNICAL_CALL_TYPE],
+            weights_by_type: { [TECHNICAL_CALL_TYPE]: q.weight },
+          };
+          if (q.sla_minutes) cfg.sla_minutes = q.sla_minutes;
+          await db.prepare(
+            "INSERT INTO form_settings (field_type, label_en, label_ar, value, is_active, sort_order) VALUES ('eval_question', ?, ?, ?, 1, ?)"
+          ).run(q.label, q.label, JSON.stringify(cfg), order++);
+        }
+        await db.prepare(
+          "INSERT INTO form_settings (field_type, label_en, value, is_active, sort_order) VALUES ('_meta', 'Technical scorecard v1 added', ?, 0, 0)"
+        ).run(TECH_MARKER);
+        console.log(`Technical Team scorecard added (${TECH_MARKER})`);
+      }
+    } catch (err) {
+      console.error('Technical scorecard migration failed:', err);
     }
 
     // ----------------------------------------------------------------
@@ -2936,10 +3012,19 @@ async function startServer() {
       // can escalate any call scored below 100 directly (tl-action).
       const status = 'Sent to Agent';
 
+      // The agent's department decides the team, and the team decides which
+      // scorecard may be used — enforced here so the three functions can't be
+      // mixed by calling the API directly. The team is stamped on the row.
+      const agentDept = await db.prepare("SELECT department FROM users WHERE id = ?").get(agent_id) as any;
+      const team = teamOfDepartment(agentDept?.department);
+      if (!isCallTypeAllowed(team, call_type, [call_type])) {
+        return res.status(400).json({ error: scorecardMismatchMessage(team) });
+      }
+
       let result;
       try {
-        result = await db.prepare("INSERT INTO evaluations (date, agent_id, qa_id, brand, call_type, final_score, critical_failure, data, status, is_wow, client_key, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)")
-          .run(date, agent_id, qa_id, brand, call_type, final_score, critical_failure ? 1 : 0, JSON.stringify(data), status, is_wow ? 1 : 0, client_key || null);
+        result = await db.prepare("INSERT INTO evaluations (date, agent_id, qa_id, brand, call_type, final_score, critical_failure, data, status, is_wow, client_key, team, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)")
+          .run(date, agent_id, qa_id, brand, call_type, final_score, critical_failure ? 1 : 0, JSON.stringify(data), status, is_wow ? 1 : 0, client_key || null, team);
       } catch (err: any) {
         // Unique-index race: two simultaneous submits with the same key —
         // the second lands here; hand back the row the first one created.
@@ -3019,6 +3104,27 @@ async function startServer() {
           Number(before.qa_id) !== Number(editor_id)
         ) {
           return res.status(403).json({ error: "You can only edit calls you created." });
+        }
+      }
+
+      // A call stays in the team it was registered under. If the agent is
+      // unchanged, the stamped team rules (so editing an old call of someone
+      // who has since moved department still works); if the agent is changed
+      // it must be someone in the same team. The call type must fit the team.
+      if (before) {
+        const stampedTeam = (before.team || 'customer_care') as ReturnType<typeof teamOfDepartment>;
+        let editTeam = stampedTeam;
+        if (Number(agent_id) !== Number(before.agent_id)) {
+          const newAgent = await db.prepare("SELECT department FROM users WHERE id = ?").get(agent_id) as any;
+          editTeam = teamOfDepartment(newAgent?.department);
+          if (editTeam !== stampedTeam) {
+            return res.status(400).json({
+              error: `This call belongs to the ${TEAM_LABELS[stampedTeam]} and can't be moved to an agent in the ${TEAM_LABELS[editTeam]}.`,
+            });
+          }
+        }
+        if (!isCallTypeAllowed(editTeam, call_type, [call_type])) {
+          return res.status(400).json({ error: scorecardMismatchMessage(editTeam) });
         }
       }
 
