@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useCallback } from 'react';
 import { useAuth } from './AuthContext';
-import { TeamKey, TEAM_KEYS, TEAM_LABELS } from '../teams';
+import { TeamKey, TEAM_KEYS, TEAM_LABELS, teamLockOf } from '../teams';
 
 /**
  * Which QA function (Customer Care / Complaint / Technical) the reports are
@@ -14,7 +14,10 @@ const KEY = 'qa_team_view';
 
 export function TeamProvider({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
-  const canSwitch = user?.role === 'supervisor' || user?.role === 'qa';
+  // Team management is locked to its own function; only the overall
+  // supervisor and QAs can switch.
+  const locked = teamLockOf(user?.role, user?.department);
+  const canSwitch = !locked && (user?.role === 'supervisor' || user?.role === 'qa');
   const [team, setTeamState] = useState<TeamKey>(() => {
     try {
       const v = localStorage.getItem(KEY) as TeamKey | null;
@@ -25,7 +28,7 @@ export function TeamProvider({ children }: { children: React.ReactNode }) {
     setTeamState(t);
     try { localStorage.setItem(KEY, t); } catch {}
   }, []);
-  return <Ctx.Provider value={{ team: canSwitch ? team : 'customer_care', setTeam, canSwitch }}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={{ team: locked ?? (canSwitch ? team : 'customer_care'), setTeam, canSwitch }}>{children}</Ctx.Provider>;
 }
 
 export const useTeam = () => useContext(Ctx);

@@ -50,6 +50,21 @@ export function isCallTypeAllowed(team: TeamKey, callType: string, allCallTypes:
   return allowedCallTypes(team, allCallTypes).some(c => c.trim().toLowerCase() === String(callType ?? '').trim().toLowerCase());
 }
 
+/**
+ * The team a staff account is locked to, or null when they may look across
+ * teams (the overall supervisor, QAs).
+ *  - supervisor / tl / cc_supervisor whose department is Complain or TEC are
+ *    that function's own management and see ONLY that function
+ *  - every other Team Leader and the Customer Care supervisor are Customer Care
+ */
+export function teamLockOf(role: string | null | undefined, department: string | null | undefined): TeamKey | null {
+  const staff = role === 'supervisor' || role === 'tl' || role === 'cc_supervisor';
+  if (!staff) return null;
+  const t = teamOfDepartment(department);
+  if (t !== 'customer_care') return t;
+  return role === 'supervisor' ? null : 'customer_care';
+}
+
 export const TEAM_KEYS: TeamKey[] = ['customer_care', 'complaint', 'technical'];
 
 /** Any unknown/garbled value becomes Customer Care, never "everything". */

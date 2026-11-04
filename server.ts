@@ -3,7 +3,7 @@ import { createServer as createViteServer } from "vite";
 import path from "path";
 import { createDb } from "./db";
 import { computeScorecard } from "./qaScorecard";
-import { teamOfDepartment, isCallTypeAllowed, TECHNICAL_CALL_TYPE, TEAM_LABELS, normalizeTeam, agentDepartmentSql } from "./src/teams";
+import { teamOfDepartment, isCallTypeAllowed, TECHNICAL_CALL_TYPE, TEAM_LABELS, normalizeTeam, agentDepartmentSql, teamLockOf } from "./src/teams";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import cors from "cors";
@@ -1907,11 +1907,24 @@ async function startServer() {
       team?: any
     ): Promise<{ clause: string; params: any[] }> => {
       const base = await buildScopeCore(userId, role, aliases);
-      if (role === 'agent' || team === undefined || team === null || team === '' || team === 'all') return base;
+      if (role === 'agent') return base;
+      // A team's own management (and Customer Care TLs) are locked to their
+      // function whatever ?team= says; only the overall supervisor and QAs
+      // may choose. Looked up from the DB, never trusted from the request.
+      const locked = await teamOf(userId);
+      const effective = locked ?? team;
+      if (effective === undefined || effective === null || effective === '' || effective === 'all') return base;
       return {
         clause: base.clause + ` AND COALESCE(${aliases.e}.team, 'customer_care') = ? `,
-        params: [...base.params, normalizeTeam(team)],
+        params: [...base.params, normalizeTeam(effective)],
       };
+    };
+
+    /** The team this user is locked to (see teamLockOf), or null. */
+    const teamOf = async (userId: any) => {
+      if (!userId) return null;
+      const u = await db.prepare("SELECT role, department FROM users WHERE id = ?").get(userId) as any;
+      return u ? teamLockOf(u.role, u.department) : null;
     };
 
     // Lets the client show the right size hint / storage note before the QA
@@ -3276,8 +3289,15 @@ async function startServer() {
       const { user_id, action, comment } = req.body; // action: approved / escalated
       const evaluation_id = req.params.id;
 
-      const evaluation = await db.prepare("SELECT agent_id, final_score, qa_id, status FROM evaluations WHERE id = ?").get(evaluation_id) as any;
+      const evaluation = await db.prepare("SELECT agent_id, final_score, qa_id, status, team FROM evaluations WHERE id = ?").get(evaluation_id) as any;
       if (!evaluation) return res.status(404).json({ error: "Evaluation not found" });
+
+      // Each function has its own escalation workflow: a TL can only act on
+      // calls of the team they belong to.
+      const actorTeam = await teamOf(user_id);
+      if (actorTeam && actorTeam !== (evaluation.team || 'customer_care')) {
+        return res.status(403).json({ error: "This call belongs to another team." });
+      }
 
       if (action === 'escalated') {
         if (Number(evaluation.final_score) >= 100) {
@@ -4223,7 +4243,7 @@ async function startServer() {
 
       // QA scope: lock down both the agent list and the eval list.
       const callerId = user_id || id;
-      const teamQ = req.query.team ?? 'customer_care';
+      const teamQ = (await teamOf(callerId)) ?? req.query.team ?? 'customer_care';
       const qaScope = await buildQAScopeClause(callerId, role, { e: 'e', agentJoin: 'a' }, teamQ);
       if (role !== 'agent') agentsQuery += agentDepartmentSql(teamQ);
       evalsQuery += qaScope.clause;
@@ -4317,7 +4337,7 @@ async function startServer() {
 
         // QA scope: even when an explicit department filter is requested,
         // the QA can only ever see their assigned scope.
-        const teamQ = req.query.team ?? 'customer_care';
+        const teamQ = (await teamOf(user_id)) ?? req.query.team ?? 'customer_care';
         const qaScope = await buildQAScopeClause(user_id, role, { e: 'e', agentJoin: 'a' }, teamQ);
         if (role !== 'agent') agentsQuery += agentDepartmentSql(teamQ);
         evalsQuery += qaScope.clause;
@@ -4571,7 +4591,7 @@ async function startServer() {
         // QA: restrict to assigned brands + departments. Also restrict the
         // active-agents list to the same department scope so headline counts
         // line up with what the QA can actually audit.
-        const teamQ = req.query.team ?? 'customer_care';
+        const teamQ = (await teamOf(user_id)) ?? req.query.team ?? 'customer_care';
         const qaScope = await buildQAScopeClause(user_id, role, { e: 'e', agentJoin: 'a' }, teamQ);
         if (role !== 'agent') agentsQuery += agentDepartmentSql(teamQ);
         evalsQuery += qaScope.clause;
