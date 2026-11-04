@@ -362,9 +362,9 @@ function encodeBufferAsDataUri(buffer: Buffer, mimetype: string): { url: string;
 
 /** Explains, in the QA's words, why a scorecard can't be used for this agent. */
 function scorecardMismatchMessage(team: ReturnType<typeof teamOfDepartment>): string {
-  if (team === 'technical') return "Technical Team agents can only be evaluated with the Technical scorecard.";
+  if (team === 'technical') return "Technical Team agents can only be evaluated with the Helpdesk scorecard.";
   if (team === 'complaint') return "Complaint Team agents can only be evaluated with the Complaints scorecard.";
-  return "The Technical scorecard is only for Technical Team agents.";
+  return "The Helpdesk scorecard is only for Technical Team agents.";
 }
 
 async function startServer() {
@@ -1165,7 +1165,7 @@ async function startServer() {
           await db.prepare("UPDATE form_settings SET is_active = 1 WHERE id = ?").run(ctRow.id);
         } else {
           await db.prepare(
-            "INSERT INTO form_settings (field_type, label_en, label_ar, value, is_active, sort_order) VALUES ('call_type', ?, ?, ?, 1, 0)"
+            "INSERT INTO form_settings (field_type, label_en, label_ar, value, is_active, sort_order) VALUES ('call_type', ?, ?, ?, 1, 999)"
           ).run(TECHNICAL_CALL_TYPE, TECHNICAL_CALL_TYPE, TECHNICAL_CALL_TYPE);
         }
 
@@ -1205,6 +1205,37 @@ async function startServer() {
       }
     } catch (err) {
       console.error('Technical scorecard migration failed:', err);
+    }
+
+    // The Technical scorecard's call type is called "Helpdesk" by the
+    // business. Rename it where the first migration already created it as
+    // "Technical" (call type row + the call_types / weights_by_type keys of
+    // its seven questions) and move it to the end of the dropdown so it can
+    // never be the default selection. Runs once.
+    try {
+      const HD_MARKER = 'helpdesk_rename_2026_11';
+      const hdDone = await db.prepare("SELECT id FROM form_settings WHERE field_type = '_meta' AND value = ?").get(HD_MARKER) as any;
+      if (!hdDone) {
+        await db.prepare("UPDATE form_settings SET value = 'Helpdesk', label_en = 'Helpdesk', label_ar = 'Helpdesk' WHERE field_type = 'call_type' AND value = 'Technical'").run();
+        const qs = await db.prepare("SELECT id, value FROM form_settings WHERE field_type = 'eval_question'").all() as any[];
+        for (const q of qs) {
+          let cfg: any;
+          try { cfg = JSON.parse(q.value); } catch { continue; }
+          if (!Array.isArray(cfg.call_types) || !cfg.call_types.includes('Technical')) continue;
+          cfg.call_types = cfg.call_types.map((c: string) => (c === 'Technical' ? 'Helpdesk' : c));
+          if (cfg.weights_by_type && cfg.weights_by_type.Technical != null) {
+            cfg.weights_by_type.Helpdesk = cfg.weights_by_type.Technical;
+            delete cfg.weights_by_type.Technical;
+          }
+          await db.prepare("UPDATE form_settings SET value = ? WHERE id = ?").run(JSON.stringify(cfg), q.id);
+        }
+        const mx = await db.prepare("SELECT COALESCE(MAX(sort_order), 0) AS m FROM form_settings WHERE field_type = 'call_type'").get() as any;
+        await db.prepare("UPDATE form_settings SET sort_order = ? WHERE field_type = 'call_type' AND value = 'Helpdesk'").run(Number(mx?.m || 0) + 1);
+        await db.prepare("INSERT INTO form_settings (field_type, label_en, value, is_active, sort_order) VALUES ('_meta', 'Technical call type renamed Helpdesk', ?, 0, 0)").run(HD_MARKER);
+        console.log('Call type renamed Technical -> Helpdesk');
+      }
+    } catch (err) {
+      console.error('Helpdesk rename failed:', err);
     }
 
     // ----------------------------------------------------------------

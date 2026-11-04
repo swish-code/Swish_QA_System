@@ -141,6 +141,10 @@ export default function EvaluationForm() {
 
   // Single source of truth for the empty-form shape — used at mount AND
   // when Save-as-Draft wipes the form so the user can start fresh.
+  // Never default to the Helpdesk scorecard — it is only for Technical Team agents.
+  const pickDefaultCallType = (opts: any[]) =>
+    (opts.find(o => o.value === 'New Order') || opts.find(o => o.value !== TECHNICAL_CALL_TYPE))?.value || 'New Order';
+
   const buildEmptyForm = useCallback(() => ({
     agent_id: '',
     evaluator_id: user?.id || '',
@@ -381,7 +385,7 @@ export default function EvaluationForm() {
           brand: options.brand[0]?.value || '',
           call_direction: options.call_direction[0]?.value || '',
           call_category: options.call_category[0]?.value || '',
-          call_type: options.call_type[0]?.value || 'New Order'
+          call_type: pickDefaultCallType(options.call_type)
         }));
       }
     } catch (err) {
@@ -419,7 +423,7 @@ export default function EvaluationForm() {
   const agentTeam = selectedAgent ? teamOfDepartment(selectedAgent.department) : null;
   const allCallTypeValues: string[] = formOptions.call_type.map((o: any) => o.value);
   const visibleCallTypes = formOptions.call_type.filter((o: any) => {
-    if (!agentTeam) return o.value !== TECHNICAL_CALL_TYPE; // no agent yet: don't offer the Technical scorecard
+    if (!agentTeam) return o.value !== TECHNICAL_CALL_TYPE; // no agent yet: don't offer the Helpdesk scorecard
     if (!isCreation && o.value === formData.call_type) return true; // never hide a saved value
     return allowedCallTypes(agentTeam, allCallTypeValues).includes(o.value);
   });
@@ -428,7 +432,7 @@ export default function EvaluationForm() {
     if (!isCreation || !agentTeam) return;
     const allowed = allowedCallTypes(agentTeam, allCallTypeValues);
     if (allowed.length > 0 && !allowed.includes(formData.call_type)) {
-      setFormData((prev: any) => ({ ...prev, call_type: allowed[0] }));
+      setFormData((prev: any) => ({ ...prev, call_type: allowed.includes('New Order') ? 'New Order' : allowed[0] }));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentTeam, formData.agent_id, formOptions.call_type.length]);
@@ -684,7 +688,7 @@ export default function EvaluationForm() {
         brand: formOptions.brand[0]?.value || '',
         call_direction: formOptions.call_direction[0]?.value || '',
         call_category: formOptions.call_category[0]?.value || '',
-        call_type: formOptions.call_type[0]?.value || 'New Order',
+        call_type: pickDefaultCallType(formOptions.call_type),
       });
       setActiveDraftId(null);
       if (draftIdParam) {
@@ -780,7 +784,7 @@ export default function EvaluationForm() {
             brand: formOptions.brand[0]?.value || '',
             call_direction: formOptions.call_direction[0]?.value || '',
             call_category: formOptions.call_category[0]?.value || '',
-            call_type: formOptions.call_type[0]?.value || 'New Order',
+            call_type: pickDefaultCallType(formOptions.call_type),
           });
           setActiveDraftId(null);
           if (draftIdParam) navigate('/evaluate', { replace: true });

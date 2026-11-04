@@ -29,7 +29,8 @@ export function teamOfDepartment(department: string | null | undefined): TeamKey
 }
 
 /** The call type that belongs to a team's own scorecard. */
-export const TECHNICAL_CALL_TYPE = 'Technical';
+// The Technical Team's own scorecard is the "Helpdesk" call type.
+export const TECHNICAL_CALL_TYPE = 'Helpdesk';
 export const COMPLAINT_CALL_TYPE = 'Complaints';
 
 /**
