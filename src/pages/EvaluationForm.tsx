@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useAuth } from '../context/AuthContext';
+import { useTeam } from '../context/TeamContext';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   FileCheck, 
@@ -419,6 +420,11 @@ export default function EvaluationForm() {
   // The agent's department decides the QA function (Customer Care /
   // Complaint / Technical) and the function decides which scorecards can be
   // used. The server enforces the same rule; this only keeps the form honest.
+  // New evaluation: the agent list follows the team picked in the header
+  // (Customer Care / Complaint / Technical). A saved call keeps its agent.
+  const { team: viewTeam } = useTeam();
+  const agentOptions = agents.filter(a =>
+    !isCreation || teamOfDepartment(a.department) === viewTeam || String(a.id) === String(formData.agent_id));
   const selectedAgent = agents.find(a => String(a.id) === String(formData.agent_id));
   const agentTeam = selectedAgent ? teamOfDepartment(selectedAgent.department) : null;
   const allCallTypeValues: string[] = formOptions.call_type.map((o: any) => o.value);
@@ -1238,7 +1244,7 @@ export default function EvaluationForm() {
               className="w-full bg-white dark:bg-zinc-900 border border-zinc-100 dark:border-zinc-800 rounded-xl px-4 py-3 text-xs text-zinc-800 dark:text-white focus:border-indigo-500 outline-none appearance-none"
             >
               <option value="">Select Agent</option>
-              {agents.map(a => <option key={a.id} value={a.id}>{a.display_name}</option>)}
+              {agentOptions.map(a => <option key={a.id} value={a.id}>{a.display_name}</option>)}
             </select>
             {agentTeam && (
               <p className="text-[9px] font-black uppercase tracking-widest text-indigo-600 dark:text-emerald-500">
